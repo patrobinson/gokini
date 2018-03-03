@@ -20,9 +20,8 @@ func (tc *testConsumer) Init(shardID string) error {
 	return nil
 }
 
-func (tc *testConsumer) ProcessRecords(records []*Records, checkpointer *Checkpointer) {
+func (tc *testConsumer) ProcessRecords(records []*Records, checkpointer Checkpointer) {
 	tc.Records = append(tc.Records, records...)
-	checkpointer.CheckpointAll()
 }
 
 func (tc *testConsumer) Shutdown() {
@@ -32,9 +31,13 @@ func (tc *testConsumer) Shutdown() {
 
 type mockKinesisClient struct {
 	kinesisiface.KinesisAPI
+	NumberRecordsBeforeClosing int
+	numberRecordsSent          int
+	getShardIteratorCalled     bool
 }
 
 func (k *mockKinesisClient) GetShardIterator(args *kinesis.GetShardIteratorInput) (*kinesis.GetShardIteratorOutput, error) {
+	k.getShardIteratorCalled = true
 	return &kinesis.GetShardIteratorOutput{
 		ShardIterator: aws.String("0123456789ABCDEF"),
 	}, nil
@@ -54,10 +57,29 @@ func (k *mockKinesisClient) DescribeStream(args *kinesis.DescribeStreamInput) (*
 	}, nil
 }
 
+type mockCheckpointer struct {
+	checkpointFound bool
+}
+
+func (c *mockCheckpointer) CheckpointSequence(string, string) error {
+	return nil
+}
+func (c *mockCheckpointer) FetchCheckpoint(string) (*string, error) {
+	if c.checkpointFound {
+		return aws.String("0123456789ABCDEF"), nil
+	}
+	return nil, ErrSequenceIDNotFound
+}
+
 func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.GetRecordsOutput, error) {
+	k.numberRecordsSent = k.numberRecordsSent + 1
+	var nextShardIterator *string
+	if k.NumberRecordsBeforeClosing == 0 || k.NumberRecordsBeforeClosing < k.numberRecordsSent {
+		nextShardIterator = aws.String("ABCD1234")
+	}
 	return &kinesis.GetRecordsOutput{
 		MillisBehindLatest: aws.Int64(0),
-		NextShardIterator:  aws.String("ABCD1234"),
+		NextShardIterator:  nextShardIterator,
 		Records: []*kinesis.Record{
 			&kinesis.Record{
 				Data:           []byte("Hello World"),
@@ -71,12 +93,15 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 func TestRecordConsumerInterface(t *testing.T) {
 	consumer := &testConsumer{}
 	kinesisSvc := &mockKinesisClient{}
+	checkpointer := &mockCheckpointer{}
 	kc := &KinesisConsumer{
 		StreamName:        "FOO",
 		ShardIteratorType: "TRIM_HORIZON",
 		RecordConsumer:    consumer,
+		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
+
 	kc.startKinesisConsumer()
 	time.Sleep(time.Duration(1 * time.Second))
 	kc.Shutdown()
@@ -93,5 +118,45 @@ func TestRecordConsumerInterface(t *testing.T) {
 	time.Sleep(time.Duration(1 * time.Second))
 	if consumer.IsShutdown != true {
 		t.Errorf("Expected consumer to be shutdown but it was not")
+	}
+
+	kinesisSvc = &mockKinesisClient{
+		NumberRecordsBeforeClosing: 2,
+	}
+	kc = &KinesisConsumer{
+		StreamName:        "FOO",
+		ShardIteratorType: "TRIM_HORIZON",
+		RecordConsumer:    consumer,
+		checkpointer:      checkpointer,
+		svc:               kinesisSvc,
+	}
+	kc.startKinesisConsumer()
+	time.Sleep(time.Duration(1 * time.Second))
+	if len(consumer.Records) != 2 {
+		t.Errorf("Expected there to be two records from Kinesis, got %d", len(consumer.Records))
+	}
+
+	if !kinesisSvc.getShardIteratorCalled {
+		t.Errorf("Expected shard iterator to be called, but it was not")
+	}
+
+	if consumer.IsShutdown != true {
+		t.Errorf("Expected consumer to be shutdown but it was not")
+	}
+
+	kinesisSvc = &mockKinesisClient{}
+	checkpointer = &mockCheckpointer{
+		checkpointFound: true,
+	}
+	kc = &KinesisConsumer{
+		StreamName:        "FOO",
+		ShardIteratorType: "TRIM_HORIZON",
+		RecordConsumer:    consumer,
+		checkpointer:      checkpointer,
+		svc:               kinesisSvc,
+	}
+	kc.startKinesisConsumer()
+	if kinesisSvc.getShardIteratorCalled {
+		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
 }

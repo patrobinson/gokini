@@ -13,7 +13,7 @@ import (
 // RecordConsumer is the interface consumers will implement
 type RecordConsumer interface {
 	Init(string) error
-	ProcessRecords([]*Records, *Checkpointer)
+	ProcessRecords([]*Records, Checkpointer)
 	Shutdown()
 }
 
@@ -22,15 +22,6 @@ type Records struct {
 	Data           []byte `json:"data"`
 	PartitionKey   string `json:"partitionKey"`
 	SequenceNumber string `json:"sequenceNumber"`
-}
-
-// Checkpointer handles checkpointing when a record has been processed
-type Checkpointer struct {
-}
-
-// CheckpointAll writes a checkpoint at a pointer to the last record sent to ProcessRecords
-func (checkpointer *Checkpointer) CheckpointAll() error {
-	return nil
 }
 
 type shardStatus struct {
@@ -43,8 +34,9 @@ type KinesisConsumer struct {
 	StreamName        string
 	ShardIteratorType string
 	RecordConsumer    RecordConsumer
+	TableName         string
 	svc               kinesisiface.KinesisAPI
-	checkpointer      *Checkpointer
+	checkpointer      Checkpointer
 	stop              *chan struct{}
 }
 
@@ -55,7 +47,9 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		return err
 	}
 	kc.svc = kinesis.New(session)
-	kc.checkpointer = &Checkpointer{}
+	kc.checkpointer = &DynamoCheckpoint{
+		TableName: kc.TableName,
+	}
 	return kc.startKinesisConsumer()
 }
 
@@ -67,6 +61,7 @@ func (kc *KinesisConsumer) Shutdown() {
 func (kc *KinesisConsumer) startKinesisConsumer() error {
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
+
 	shards, err := getShardIDs(kc.svc, kc.StreamName, "")
 	if err != nil {
 		return err
@@ -75,6 +70,7 @@ func (kc *KinesisConsumer) startKinesisConsumer() error {
 		kc.RecordConsumer.Init(shardID)
 		go kc.getRecords(shardID)
 	}
+
 	return nil
 }
 
@@ -114,29 +110,41 @@ func getShardIDs(kinesisSvc kinesisiface.KinesisAPI, streamName string, startSha
 	return shards, nil
 }
 
-func (kc *KinesisConsumer) getRecords(shardID string) {
-	shardIterArgs := &kinesis.GetShardIteratorInput{
-		ShardId:           aws.String(shardID),
-		ShardIteratorType: aws.String(kc.ShardIteratorType),
-		StreamName:        aws.String(kc.StreamName),
-	}
-	iterResp, err := kc.svc.GetShardIterator(shardIterArgs)
+func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
+	shardIterator, err := kc.checkpointer.FetchCheckpoint(shardID)
 	if err != nil {
-		log.Fatalf("Unable to retrieve records: %v", err)
+		if err != ErrSequenceIDNotFound {
+			return nil, err
+		}
+		shardIterArgs := &kinesis.GetShardIteratorInput{
+			ShardId:           aws.String(shardID),
+			ShardIteratorType: aws.String(kc.ShardIteratorType),
+			StreamName:        aws.String(kc.StreamName),
+		}
+		iterResp, err := kc.svc.GetShardIterator(shardIterArgs)
+		if err != nil {
+			return nil, err
+		}
+		return iterResp.ShardIterator, nil
+	}
+
+	return shardIterator, nil
+}
+
+func (kc *KinesisConsumer) getRecords(shardID string) {
+	shardIterator, err := kc.getShardIterator(shardID)
+	if err != nil {
+		log.Fatalf("Unable to get shard iterator for %s: %s", shardID, err)
 	}
 
 	for {
 		getRecordsArgs := &kinesis.GetRecordsInput{
-			ShardIterator: iterResp.ShardIterator,
+			ShardIterator: shardIterator,
 		}
 		getResp, err := kc.svc.GetRecords(getRecordsArgs)
 		if err != nil {
 			log.Errorf("Error getting records from shard %v: %v", shardID, err)
 			continue
-		}
-		if getResp.NextShardIterator == nil {
-			kc.RecordConsumer.Shutdown()
-			return
 		}
 
 		var records []*Records
@@ -149,6 +157,13 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			records = append(records, record)
 		}
 		kc.RecordConsumer.ProcessRecords(records, kc.checkpointer)
+
+		// The shard has been closed, so no new records can be read from it
+		if getResp.NextShardIterator == nil {
+			kc.RecordConsumer.Shutdown()
+			return
+		}
+
 		select {
 		case <-*kc.stop:
 			kc.RecordConsumer.Shutdown()
