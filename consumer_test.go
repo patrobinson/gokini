@@ -172,57 +172,6 @@ func TestStartConsumer(t *testing.T) {
 	if kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
-}
-
-type PrintRecordConsumer struct {
-	shardID string
-}
-
-func (p *PrintRecordConsumer) Init(shardID string) error {
-	p.shardID = shardID
-	return nil
-}
-
-func (p *PrintRecordConsumer) ProcessRecords(records []*Records, checkpointer Checkpointer) {
-	fmt.Printf("%s\n", records[0].Data)
-	err := checkpointer.CheckpointSequence(p.shardID, records[len(records)-1].SequenceNumber)
-	if err != nil {
-		fmt.Printf("Error checkpointing sequence")
-	}
-}
-
-func (p *PrintRecordConsumer) Shutdown() {
-	fmt.Print("PrintRecordConsumer Shutdown\n")
-}
-
-func ExampleRecordConsumer() {
-	log.SetLevel(log.DebugLevel)
-
-	// Mocks for Kinesis and DynamoDB
-	mockKinesis := &mockKinesisClient{
-		NumberRecordsBeforeClosing: 1,
-		RecordData:                 []byte("foo"),
-	}
-	mockCheckpoint := &mockCheckpointer{}
-
-	// An implementation of the RecordConsumer interface that prints out records
-	rc := &PrintRecordConsumer{}
-	kc := &KinesisConsumer{
-		StreamName:        "KINESIS_STREAM",
-		ShardIteratorType: "TRIM_HORIZON",
-		RecordConsumer:    rc,
-		TableName:         "gokini",
-		svc:               mockKinesis,    // Used to mock out Kinesis Stream. Do not set
-		checkpointer:      mockCheckpoint, // Used to mock out DynamoDB table. Do not set
-	}
-
-	go kc.StartConsumer()
-
-	// StartConsumer returns immediately so wait for it to do it's thing
 	time.Sleep(1 * time.Second)
 	kc.Shutdown()
-
-	// Output:
-	// foo
-	// PrintRecordConsumer Shutdown
 }
