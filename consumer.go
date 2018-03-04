@@ -42,13 +42,15 @@ type KinesisConsumer struct {
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
-	session, err := session.NewSessionWithOptions(session.Options{SharedConfigState: session.SharedConfigEnable})
-	if err != nil {
-		return err
-	}
-	kc.svc = kinesis.New(session)
-	kc.checkpointer = &DynamoCheckpoint{
-		TableName: kc.TableName,
+	if kc.svc == nil && kc.checkpointer == nil {
+		session, err := session.NewSessionWithOptions(session.Options{SharedConfigState: session.SharedConfigEnable})
+		if err != nil {
+			return err
+		}
+		kc.svc = kinesis.New(session)
+		kc.checkpointer = &DynamoCheckpoint{
+			TableName: kc.TableName,
+		}
 	}
 	return kc.startKinesisConsumer()
 }

@@ -1,6 +1,7 @@
 package gokini
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ type mockKinesisClient struct {
 	NumberRecordsBeforeClosing int
 	numberRecordsSent          int
 	getShardIteratorCalled     bool
+	RecordData                 []byte
 }
 
 func (k *mockKinesisClient) GetShardIterator(args *kinesis.GetShardIteratorInput) (*kinesis.GetShardIteratorOutput, error) {
@@ -82,7 +84,7 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 		NextShardIterator:  nextShardIterator,
 		Records: []*kinesis.Record{
 			&kinesis.Record{
-				Data:           []byte("Hello World"),
+				Data:           k.RecordData,
 				PartitionKey:   aws.String("abcdefg"),
 				SequenceNumber: aws.String("012345"),
 			},
@@ -92,7 +94,9 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 
 func TestRecordConsumerInterface(t *testing.T) {
 	consumer := &testConsumer{}
-	kinesisSvc := &mockKinesisClient{}
+	kinesisSvc := &mockKinesisClient{
+		RecordData: []byte("Hello World"),
+	}
 	checkpointer := &mockCheckpointer{}
 	kc := &KinesisConsumer{
 		StreamName:        "FOO",
@@ -122,6 +126,7 @@ func TestRecordConsumerInterface(t *testing.T) {
 
 	kinesisSvc = &mockKinesisClient{
 		NumberRecordsBeforeClosing: 2,
+		RecordData:                 []byte("Hello World"),
 	}
 	kc = &KinesisConsumer{
 		StreamName:        "FOO",
@@ -144,7 +149,9 @@ func TestRecordConsumerInterface(t *testing.T) {
 		t.Errorf("Expected consumer to be shutdown but it was not")
 	}
 
-	kinesisSvc = &mockKinesisClient{}
+	kinesisSvc = &mockKinesisClient{
+		RecordData: []byte("Hello World"),
+	}
 	checkpointer = &mockCheckpointer{
 		checkpointFound: true,
 	}
@@ -159,4 +166,49 @@ func TestRecordConsumerInterface(t *testing.T) {
 	if kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
+}
+
+type PrintRecordConsumer struct {
+	shardID string
+}
+
+func (p *PrintRecordConsumer) Init(shardID string) error {
+	p.shardID = shardID
+	return nil
+}
+
+func (p *PrintRecordConsumer) ProcessRecords(records []*Records, checkpointer Checkpointer) {
+	fmt.Printf("%s\n", records[0].Data)
+	err := checkpointer.CheckpointSequence(p.shardID, records[len(records)-1].SequenceNumber)
+	if err != nil {
+		fmt.Printf("Error checkpointing sequence")
+	}
+}
+
+func (p *PrintRecordConsumer) Shutdown() {
+	fmt.Print("PrintRecordConsumer Shutdown\n")
+}
+
+func ExampleRecordConsumer() {
+	rc := &PrintRecordConsumer{}
+	mockKinesis := &mockKinesisClient{
+		NumberRecordsBeforeClosing: 2,
+		RecordData:                 []byte("foo"),
+	}
+	mockCheckpoint := &mockCheckpointer{}
+	kc := &KinesisConsumer{
+		StreamName:        "KINESIS_STREAM",
+		ShardIteratorType: "TRIM_HORIZON",
+		RecordConsumer:    rc,
+		TableName:         "gokini",
+		svc:               mockKinesis,    // Used to mock out Kinesis Stream. Do not set
+		checkpointer:      mockCheckpoint, // Used to mock out DynamoDB table. Do not set
+	}
+
+	kc.StartConsumer()
+	time.Sleep(time.Duration(time.Second))
+
+	// Output:
+	// foo
+	// PrintRecordConsumer Shutdown
 }
