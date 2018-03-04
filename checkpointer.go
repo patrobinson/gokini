@@ -44,7 +44,7 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shardID string) (*string, 
 	}
 
 	sequenceID, ok := checkpoint["SequenceID"]
-	if !ok {
+	if !ok || sequenceID.S == nil {
 		return nil, ErrSequenceIDNotFound
 	}
 	return sequenceID.S, nil
