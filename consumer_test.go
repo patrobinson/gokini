@@ -106,7 +106,7 @@ func TestRecordConsumerInterface(t *testing.T) {
 		svc:               kinesisSvc,
 	}
 
-	kc.startKinesisConsumer()
+	kc.StartConsumer()
 	time.Sleep(time.Duration(1 * time.Second))
 	kc.Shutdown()
 	if consumer.ShardID != "00000001" {
@@ -135,7 +135,7 @@ func TestRecordConsumerInterface(t *testing.T) {
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
-	kc.startKinesisConsumer()
+	kc.StartConsumer()
 	time.Sleep(time.Duration(1 * time.Second))
 	if len(consumer.Records) != 2 {
 		t.Errorf("Expected there to be two records from Kinesis, got %d", len(consumer.Records))
@@ -162,7 +162,7 @@ func TestRecordConsumerInterface(t *testing.T) {
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
-	kc.startKinesisConsumer()
+	kc.StartConsumer()
 	if kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}

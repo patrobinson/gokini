@@ -52,15 +52,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 			TableName: kc.TableName,
 		}
 	}
-	return kc.startKinesisConsumer()
-}
 
-// Shutdown stops consuming records gracefully
-func (kc *KinesisConsumer) Shutdown() {
-	close(*kc.stop)
-}
-
-func (kc *KinesisConsumer) startKinesisConsumer() error {
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
 
@@ -74,6 +66,11 @@ func (kc *KinesisConsumer) startKinesisConsumer() error {
 	}
 
 	return nil
+}
+
+// Shutdown stops consuming records gracefully
+func (kc *KinesisConsumer) Shutdown() {
+	close(*kc.stop)
 }
 
 func getShardIDs(kinesisSvc kinesisiface.KinesisAPI, streamName string, startShardID string) (map[string]shardStatus, error) {
