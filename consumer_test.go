@@ -1,7 +1,6 @@
 package gokini
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -160,7 +159,8 @@ func TestStartConsumer(t *testing.T) {
 
 	consumer = &testConsumer{}
 	kinesisSvc = &mockKinesisClient{
-		RecordData: []byte("Hello World"),
+		NumberRecordsBeforeClosing: 1,
+		RecordData:                 []byte("Hello World"),
 	}
 	checkpointer = &mockCheckpointer{
 		checkpointFound: true,
