@@ -190,12 +190,15 @@ func (p *PrintRecordConsumer) Shutdown() {
 }
 
 func ExampleRecordConsumer() {
-	rc := &PrintRecordConsumer{}
+	// Mocks for Kinesis and DynamoDB
 	mockKinesis := &mockKinesisClient{
 		NumberRecordsBeforeClosing: 2,
 		RecordData:                 []byte("foo"),
 	}
 	mockCheckpoint := &mockCheckpointer{}
+
+	// An implementation of the RecordConsumer interface that prints out records
+	rc := &PrintRecordConsumer{}
 	kc := &KinesisConsumer{
 		StreamName:        "KINESIS_STREAM",
 		ShardIteratorType: "TRIM_HORIZON",
@@ -206,6 +209,8 @@ func ExampleRecordConsumer() {
 	}
 
 	kc.StartConsumer()
+
+	// StartConsumer returns immediately so wait for it to do it's thing
 	time.Sleep(time.Duration(time.Second))
 
 	// Output:
