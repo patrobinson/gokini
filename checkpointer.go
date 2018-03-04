@@ -89,7 +89,7 @@ func (checkpointer *DynamoCheckpoint) createTable() error {
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
 				AttributeName: aws.String("ShardID"),
-				KeyType:       aws.String("S"),
+				KeyType:       aws.String("HASH"),
 			},
 		},
 		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
