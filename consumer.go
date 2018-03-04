@@ -2,12 +2,17 @@ package gokini
 
 import (
 	"errors"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 // RecordConsumer is the interface consumers will implement
@@ -25,8 +30,9 @@ type Records struct {
 }
 
 type shardStatus struct {
-	ShardID    string
+	ID         string
 	Checkpoint string
+	AssignedTo string
 }
 
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
@@ -38,6 +44,9 @@ type KinesisConsumer struct {
 	svc               kinesisiface.KinesisAPI
 	checkpointer      Checkpointer
 	stop              *chan struct{}
+	shardStatus       map[string]*shardStatus
+	consumerID        string
+	sigs              *chan os.Signal
 }
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
@@ -53,60 +62,81 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		}
 	}
 
+	kc.shardStatus = make(map[string]*shardStatus)
+
+	sigs := make(chan os.Signal, 1)
+	kc.sigs = &sigs
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
 
-	shards, err := getShardIDs(kc.svc, kc.StreamName, "")
-	if err != nil {
-		return err
-	}
-	for shardID := range shards {
-		kc.RecordConsumer.Init(shardID)
-		go kc.getRecords(shardID)
-	}
+	kc.consumerID = uuid.New().String()
 
-	return nil
+	for {
+		var err error
+		err = kc.getShardIDs("")
+		if err != nil {
+			return err
+		}
+
+		for _, shard := range kc.shardStatus {
+			if shard.AssignedTo == kc.consumerID {
+				continue
+			}
+
+			kc.RecordConsumer.Init(shard.ID)
+			shard.AssignedTo = kc.consumerID
+			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
+			go kc.getRecords(shard.ID)
+		}
+		select {
+		case sig := <-sigs:
+			log.Infof("Received signal %s. Exiting", sig)
+			kc.Shutdown()
+		case <-time.After(1 * time.Second):
+		}
+	}
 }
 
 // Shutdown stops consuming records gracefully
 func (kc *KinesisConsumer) Shutdown() {
 	close(*kc.stop)
+	time.Sleep(1 * time.Second)
 }
 
-func getShardIDs(kinesisSvc kinesisiface.KinesisAPI, streamName string, startShardID string) (map[string]shardStatus, error) {
-	shards := map[string]shardStatus{}
+func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 	args := &kinesis.DescribeStreamInput{
-		StreamName: aws.String(streamName),
+		ExclusiveStartShardId: aws.String(startShardID),
+		StreamName:            aws.String(kc.StreamName),
 	}
-	streamDesc, err := kinesisSvc.DescribeStream(args)
+	streamDesc, err := kc.svc.DescribeStream(args)
 	if err != nil {
-		return shards, err
+		return err
 	}
 
 	if *streamDesc.StreamDescription.StreamStatus != "ACTIVE" {
-		return shards, errors.New("Stream not active")
+		return errors.New("Stream not active")
 	}
 
 	var lastShardID string
 	for _, s := range streamDesc.StreamDescription.Shards {
-		shards[*s.ShardId] = shardStatus{
-			ShardID: *s.ShardId,
+		if _, ok := kc.shardStatus[*s.ShardId]; !ok {
+			kc.shardStatus[*s.ShardId] = &shardStatus{
+				ID: *s.ShardId,
+			}
 		}
 		lastShardID = *s.ShardId
 	}
 
 	if *streamDesc.StreamDescription.HasMoreShards {
-		moreShards, err := getShardIDs(kinesisSvc, streamName, lastShardID)
+		err := kc.getShardIDs(lastShardID)
 		if err != nil {
-			return shards, err
-		}
-
-		for k, v := range moreShards {
-			shards[k] = v
+			return err
 		}
 	}
 
-	return shards, nil
+	return nil
 }
 
 func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
@@ -159,6 +189,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 
 		// The shard has been closed, so no new records can be read from it
 		if getResp.NextShardIterator == nil {
+			log.Debugf("Shard %s closed", shardID)
 			kc.RecordConsumer.Shutdown()
 			return
 		}
@@ -167,6 +198,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		case <-*kc.stop:
 			kc.RecordConsumer.Shutdown()
 			return
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }

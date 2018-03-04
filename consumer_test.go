@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
+	log "github.com/sirupsen/logrus"
 )
 
 type testConsumer struct {
@@ -76,7 +77,7 @@ func (c *mockCheckpointer) FetchCheckpoint(string) (*string, error) {
 func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.GetRecordsOutput, error) {
 	k.numberRecordsSent = k.numberRecordsSent + 1
 	var nextShardIterator *string
-	if k.NumberRecordsBeforeClosing == 0 || k.NumberRecordsBeforeClosing < k.numberRecordsSent {
+	if k.NumberRecordsBeforeClosing == 0 || k.numberRecordsSent < k.NumberRecordsBeforeClosing {
 		nextShardIterator = aws.String("ABCD1234")
 	}
 	return &kinesis.GetRecordsOutput{
@@ -92,10 +93,12 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 	}, nil
 }
 
-func TestRecordConsumerInterface(t *testing.T) {
+func TestStartConsumer(t *testing.T) {
+	log.SetLevel(log.DebugLevel)
 	consumer := &testConsumer{}
 	kinesisSvc := &mockKinesisClient{
-		RecordData: []byte("Hello World"),
+		NumberRecordsBeforeClosing: 1,
+		RecordData:                 []byte("Hello World"),
 	}
 	checkpointer := &mockCheckpointer{}
 	kc := &KinesisConsumer{
@@ -106,8 +109,8 @@ func TestRecordConsumerInterface(t *testing.T) {
 		svc:               kinesisSvc,
 	}
 
-	kc.StartConsumer()
-	time.Sleep(time.Duration(1 * time.Second))
+	go kc.StartConsumer()
+	time.Sleep(1 * time.Second)
 	kc.Shutdown()
 	if consumer.ShardID != "00000001" {
 		t.Errorf("Expected shardId to be set to 00000001, but got: %s", consumer.ShardID)
@@ -119,11 +122,12 @@ func TestRecordConsumerInterface(t *testing.T) {
 		t.Errorf("Expected record to be \"Hello World\", got %s", consumer.Records[1].Data)
 	}
 
-	time.Sleep(time.Duration(1 * time.Second))
+	time.Sleep(1 * time.Second)
 	if consumer.IsShutdown != true {
 		t.Errorf("Expected consumer to be shutdown but it was not")
 	}
 
+	consumer = &testConsumer{}
 	kinesisSvc = &mockKinesisClient{
 		NumberRecordsBeforeClosing: 2,
 		RecordData:                 []byte("Hello World"),
@@ -135,8 +139,9 @@ func TestRecordConsumerInterface(t *testing.T) {
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
-	kc.StartConsumer()
-	time.Sleep(time.Duration(1 * time.Second))
+	go kc.StartConsumer()
+	time.Sleep(1 * time.Second)
+	kc.Shutdown()
 	if len(consumer.Records) != 2 {
 		t.Errorf("Expected there to be two records from Kinesis, got %d", len(consumer.Records))
 	}
@@ -149,6 +154,7 @@ func TestRecordConsumerInterface(t *testing.T) {
 		t.Errorf("Expected consumer to be shutdown but it was not")
 	}
 
+	consumer = &testConsumer{}
 	kinesisSvc = &mockKinesisClient{
 		RecordData: []byte("Hello World"),
 	}
@@ -162,7 +168,7 @@ func TestRecordConsumerInterface(t *testing.T) {
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
-	kc.StartConsumer()
+	go kc.StartConsumer()
 	if kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
@@ -190,9 +196,11 @@ func (p *PrintRecordConsumer) Shutdown() {
 }
 
 func ExampleRecordConsumer() {
+	log.SetLevel(log.DebugLevel)
+
 	// Mocks for Kinesis and DynamoDB
 	mockKinesis := &mockKinesisClient{
-		NumberRecordsBeforeClosing: 2,
+		NumberRecordsBeforeClosing: 1,
 		RecordData:                 []byte("foo"),
 	}
 	mockCheckpoint := &mockCheckpointer{}
@@ -208,10 +216,11 @@ func ExampleRecordConsumer() {
 		checkpointer:      mockCheckpoint, // Used to mock out DynamoDB table. Do not set
 	}
 
-	kc.StartConsumer()
+	go kc.StartConsumer()
 
 	// StartConsumer returns immediately so wait for it to do it's thing
-	time.Sleep(time.Duration(time.Second))
+	time.Sleep(1 * time.Second)
+	kc.Shutdown()
 
 	// Output:
 	// foo

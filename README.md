@@ -1,6 +1,6 @@
 # Gokini
 
-[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg))](https://godoc.org/github.com/patrobinson/gokini)
+[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg)](https://godoc.org/github.com/patrobinson/gokini)
 [![Build
 Status](https://travis-ci.org/golang/gddo.svg?branch=master)](https://travis-ci.org/patrobinson/gokini)
 
