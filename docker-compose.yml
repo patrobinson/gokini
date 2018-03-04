@@ -15,7 +15,7 @@ services:
   gokini:
     image: golang:1.10
     volumes:
-      - ~/go/src:/go/src
+      - .:/go/src/github.com/patrobinson/gokini
     working_dir: /go/src/github.com/patrobinson/gokini
     depends_on:
       - kinesis
