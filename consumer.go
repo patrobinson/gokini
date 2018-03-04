@@ -204,6 +204,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			kc.RecordConsumer.Shutdown()
 			return
 		}
+		shardIterator = getResp.NextShardIterator
 
 		select {
 		case <-*kc.stop:
