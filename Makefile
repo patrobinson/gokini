@@ -13,11 +13,6 @@ docker-integration:
 	 @docker-compose run --rm gokini make integration
 
 travis-integration:
-	export KINESIS_ENDPOINT=http://localhost:4567
-	export DYNAMODB_ENDPOINT=http://localhost:8000
-	export AWS_DEFAULT_REGION=ap-nil-1
-	export AWS_ACCESS_KEY=AKAILKAJDFLKADJFL
-	export AWS_SECRET_KEY=90uda098fjdsoifjsdaoifjpisjf
 	@docker-compose up -d
 	@sleep 10
 	@go test -timeout 30s -tags=integration
