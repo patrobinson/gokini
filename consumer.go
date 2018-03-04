@@ -118,8 +118,10 @@ func (kc *KinesisConsumer) Shutdown() {
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 	args := &kinesis.DescribeStreamInput{
-		ExclusiveStartShardId: aws.String(startShardID),
-		StreamName:            aws.String(kc.StreamName),
+		StreamName: aws.String(kc.StreamName),
+	}
+	if startShardID != "" {
+		args.ExclusiveStartShardId = aws.String(startShardID)
 	}
 	streamDesc, err := kc.svc.DescribeStream(args)
 	if err != nil {
