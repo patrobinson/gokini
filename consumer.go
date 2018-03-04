@@ -70,9 +70,11 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		}
 	}
 
+	log.Debugf("Initializing Checkpointer")
 	if err := kc.checkpointer.Init(); err != nil {
 		log.Fatalf("Failed to start Checkpointer: %s", err)
 	}
+
 	kc.shardStatus = make(map[string]*shardStatus)
 
 	sigs := make(chan os.Signal, 1)
@@ -85,11 +87,13 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	kc.consumerID = uuid.New().String()
 
 	for {
+		log.Debug("Getting shards")
 		var err error
 		err = kc.getShardIDs("")
 		if err != nil {
 			return err
 		}
+		log.Debugf("Found %d shards", len(kc.shardStatus))
 
 		for _, shard := range kc.shardStatus {
 			if shard.AssignedTo == kc.consumerID {
@@ -139,6 +143,7 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 	var lastShardID string
 	for _, s := range streamDesc.StreamDescription.Shards {
 		if _, ok := kc.shardStatus[*s.ShardId]; !ok {
+			log.Debugf("Found shard with id %s", *s.ShardId)
 			kc.shardStatus[*s.ShardId] = &shardStatus{
 				ID: *s.ShardId,
 			}
@@ -201,6 +206,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 				SequenceNumber: *r.SequenceNumber,
 			}
 			records = append(records, record)
+			log.Debugf("Processing record %s", *r.SequenceNumber)
 		}
 		kc.RecordConsumer.ProcessRecords(records, kc.checkpointer)
 
