@@ -105,6 +105,10 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		case sig := <-sigs:
 			log.Infof("Received signal %s. Exiting", sig)
 			kc.Shutdown()
+			return nil
+		case <-*kc.stop:
+			log.Info("Received stop signal")
+			return nil
 		case <-time.After(1 * time.Second):
 		}
 	}
