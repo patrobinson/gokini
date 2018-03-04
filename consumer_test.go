@@ -64,7 +64,11 @@ type mockCheckpointer struct {
 	checkpointFound bool
 }
 
-func (c *mockCheckpointer) CheckpointSequence(string, string) error {
+func (c *mockCheckpointer) Init() error {
+	return nil
+}
+
+func (c *mockCheckpointer) CheckpointSequence(string, *string) error {
 	return nil
 }
 func (c *mockCheckpointer) FetchCheckpoint(string) (*string, error) {

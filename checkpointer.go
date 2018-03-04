@@ -2,15 +2,19 @@ package gokini
 
 import (
 	"errors"
+	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	log "github.com/sirupsen/logrus"
 )
 
 // Checkpointer handles checkpointing when a record has been processed
 type Checkpointer interface {
-	CheckpointSequence(string, string) error
+	Init() error
+	CheckpointSequence(string, *string) error
 	FetchCheckpoint(string) (*string, error)
 }
 
@@ -23,14 +27,38 @@ type DynamoCheckpoint struct {
 	svc       dynamodbiface.DynamoDBAPI
 }
 
+// Init initialises the DynamoDB Checkpoint
+func (checkpointer *DynamoCheckpoint) Init() error {
+	log.Debug("Creating DynamoDB session")
+	session, err := session.NewSessionWithOptions(
+		session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	if endpoint := os.Getenv("DYNAMODB_ENDPOINT"); endpoint != "" {
+		session.Config.Endpoint = aws.String(endpoint)
+	}
+
+	checkpointer.svc = dynamodb.New(session)
+
+	if !checkpointer.doesTableExist() {
+		return checkpointer.createTable()
+	}
+	return nil
+}
+
 // CheckpointSequence writes a checkpoint at the designated sequence ID
-func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenceID string) error {
+func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenceID *string) error {
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
 		"ShardID": {
 			S: &shardID,
 		},
 		"SequenceID": {
-			S: &sequenceID,
+			S: sequenceID,
 		},
 	}
 	return checkpointer.saveItem(marshalledCheckpoint)
@@ -48,12 +76,6 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shardID string) (*string, 
 		return nil, ErrSequenceIDNotFound
 	}
 	return sequenceID.S, nil
-}
-
-func (checkpointer *DynamoCheckpoint) setupDynamo() {
-	if !checkpointer.doesTableExist() {
-		checkpointer.createTable()
-	}
 }
 
 func (checkpointer *DynamoCheckpoint) createTable() error {

@@ -62,6 +62,9 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		}
 	}
 
+	if err := kc.checkpointer.Init(); err != nil {
+		log.Fatalf("Failed to start Checkpointer: %s", err)
+	}
 	kc.shardStatus = make(map[string]*shardStatus)
 
 	sigs := make(chan os.Signal, 1)
