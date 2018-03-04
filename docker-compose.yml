@@ -1,0 +1,28 @@
+version: "3.4"
+services:
+  kinesis:
+    image: dlsniper/kinesalite
+    ports:
+      - 4567
+  dynamodb:
+    image: deangiberson/aws-dynamodb-local
+    ports:
+      - 8000
+  gokini:
+    image: golang:1.10
+    volumes:
+      - ~/go/src:/go/src
+    working_dir: /go/src/github.com/patrobinson/gokini
+    depends_on:
+      - kinesis
+      - dynamodb
+    links:
+      - kinesis
+      - dynamodb
+    command: make integration
+    environment:
+      - KINESIS_ENDPOINT=http://kinesis:4567
+      - DYNAMODB_ENDPOINT=http://dynamodb:8000
+      - AWS_DEFAULT_REGION=ap-nil-1
+      - AWS_ACCESS_KEY=AKAILKAJDFLKADJFL
+      - AWS_SECRET_KEY=90uda098fjdsoifjsdaoifjpisjf
