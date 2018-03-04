@@ -52,9 +52,17 @@ type KinesisConsumer struct {
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
 	if kc.svc == nil && kc.checkpointer == nil {
-		session, err := session.NewSessionWithOptions(session.Options{SharedConfigState: session.SharedConfigEnable})
+		log.Debugf("Creating Kinesis Session")
+		session, err := session.NewSessionWithOptions(
+			session.Options{
+				SharedConfigState: session.SharedConfigEnable,
+			},
+		)
 		if err != nil {
 			return err
+		}
+		if endpoint := os.Getenv("KINESIS_ENDPOINT"); endpoint != "" {
+			session.Config.Endpoint = aws.String(endpoint)
 		}
 		kc.svc = kinesis.New(session)
 		kc.checkpointer = &DynamoCheckpoint{
