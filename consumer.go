@@ -15,6 +15,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const defaultEmptyRecordBackoffMs = 500
+
 // RecordConsumer is the interface consumers will implement
 type RecordConsumer interface {
 	Init(string) error
@@ -37,20 +39,26 @@ type shardStatus struct {
 
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
 type KinesisConsumer struct {
-	StreamName        string
-	ShardIteratorType string
-	RecordConsumer    RecordConsumer
-	TableName         string
-	svc               kinesisiface.KinesisAPI
-	checkpointer      Checkpointer
-	stop              *chan struct{}
-	shardStatus       map[string]*shardStatus
-	consumerID        string
-	sigs              *chan os.Signal
+	StreamName           string
+	ShardIteratorType    string
+	RecordConsumer       RecordConsumer
+	TableName            string
+	EmptyRecordBackoffMs int
+	svc                  kinesisiface.KinesisAPI
+	checkpointer         Checkpointer
+	stop                 *chan struct{}
+	shardStatus          map[string]*shardStatus
+	consumerID           string
+	sigs                 *chan os.Signal
 }
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
+	// Set Defaults
+	if kc.EmptyRecordBackoffMs == 0 {
+		kc.EmptyRecordBackoffMs = defaultEmptyRecordBackoffMs
+	}
+
 	if kc.svc == nil && kc.checkpointer == nil {
 		log.Debugf("Creating Kinesis Session")
 		session, err := session.NewSessionWithOptions(
@@ -208,7 +216,9 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			records = append(records, record)
 			log.Debugf("Processing record %s", *r.SequenceNumber)
 		}
-		kc.RecordConsumer.ProcessRecords(records, kc.checkpointer)
+		if len(records) == 0 {
+			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
+		}
 
 		// The shard has been closed, so no new records can be read from it
 		if getResp.NextShardIterator == nil {

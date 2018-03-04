@@ -43,10 +43,11 @@ func ExampleRecordConsumer() {
 	// An implementation of the RecordConsumer interface that prints out records
 	rc := &PrintRecordConsumer{}
 	kc := &KinesisConsumer{
-		StreamName:        "KINESIS_STREAM",
-		ShardIteratorType: "TRIM_HORIZON",
-		RecordConsumer:    rc,
-		TableName:         "gokini",
+		StreamName:           "KINESIS_STREAM",
+		ShardIteratorType:    "TRIM_HORIZON",
+		RecordConsumer:       rc,
+		TableName:            "gokini",
+		EmptyRecordBackoffMs: 1000,
 	}
 	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"))
 
