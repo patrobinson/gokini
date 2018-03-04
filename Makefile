@@ -14,5 +14,6 @@ docker-integration:
 
 travis-integration:
 	export KINESIS_ENDPOINT=http://localhost:4567 DYNAMODB_ENDPOINT=http://localhost:8000 AWS_DEFAULT_REGION=ap-nil-1 AWS_ACCESS_KEY=AKAILKAJDFLKADJFL AWS_SECRET_KEY=90uda098fjdsoifjsdaoifjpisjf
-	@docker-compose up
+	@docker-compose up -d
+	@sleep 10
 	@go test -timeout 30s -tags=integration
