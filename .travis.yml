@@ -6,4 +6,4 @@ go:
   - "1.10"
 
 install: make get
-script: make integration
+script: make travis-integration
