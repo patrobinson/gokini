@@ -3,13 +3,13 @@ services:
   kinesis:
     image: dlsniper/kinesalite
     ports:
-      - 4567
+      - 4567:4567
     expose:
       - 4567
   dynamodb:
     image: deangiberson/aws-dynamodb-local
     ports:
-      - 8000
+      - 8000:8000
     expose:
       - 8000
   gokini:
