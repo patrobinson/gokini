@@ -23,7 +23,6 @@ services:
     links:
       - kinesis
       - dynamodb
-    command: make integration
     environment:
       - KINESIS_ENDPOINT=http://kinesis:4567
       - DYNAMODB_ENDPOINT=http://dynamodb:8000
