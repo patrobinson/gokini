@@ -7,7 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
-	log "github.com/sirupsen/logrus"
 )
 
 type testConsumer struct {
@@ -21,7 +20,7 @@ func (tc *testConsumer) Init(shardID string) error {
 	return nil
 }
 
-func (tc *testConsumer) ProcessRecords(records []*Records, checkpointer Checkpointer) {
+func (tc *testConsumer) ProcessRecords(records []*Records, consumer *KinesisConsumer) {
 	tc.Records = append(tc.Records, records...)
 }
 
@@ -67,7 +66,7 @@ func (c *mockCheckpointer) Init() error {
 	return nil
 }
 
-func (c *mockCheckpointer) CheckpointSequence(string, *string) error {
+func (c *mockCheckpointer) CheckpointSequence(string, *string, string) error {
 	return nil
 }
 func (c *mockCheckpointer) FetchCheckpoint(string) (*string, error) {
@@ -97,7 +96,6 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 }
 
 func TestStartConsumer(t *testing.T) {
-	log.SetLevel(log.DebugLevel)
 	consumer := &testConsumer{}
 	kinesisSvc := &mockKinesisClient{
 		NumberRecordsBeforeClosing: 1,

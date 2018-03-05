@@ -14,7 +14,7 @@ import (
 // Checkpointer handles checkpointing when a record has been processed
 type Checkpointer interface {
 	Init() error
-	CheckpointSequence(string, *string) error
+	CheckpointSequence(string, *string, string) error
 	FetchCheckpoint(string) (*string, error)
 }
 
@@ -52,13 +52,16 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 }
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID
-func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenceID *string) error {
+func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenceID *string, assignedTo string) error {
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
 		"ShardID": {
 			S: &shardID,
 		},
 		"SequenceID": {
 			S: sequenceID,
+		},
+		"AssignedTo": {
+			S: &assignedTo,
 		},
 	}
 	return checkpointer.saveItem(marshalledCheckpoint)
@@ -75,7 +78,8 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shardID string) (*string, 
 	if !ok || sequenceID.S == nil {
 		return nil, ErrSequenceIDNotFound
 	}
-	return sequenceID.S, nil
+	log.Debugf("Retrieved Shard Iterator %s", *sequenceID.S)
+	return (*sequenceID).S, nil
 }
 
 func (checkpointer *DynamoCheckpoint) createTable() error {

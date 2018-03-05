@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
@@ -15,12 +16,17 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const defaultEmptyRecordBackoffMs = 500
+const (
+	defaultEmptyRecordBackoffMs = 500
+	// This is defined in the API Reference https://docs.aws.amazon.com/sdk-for-go/api/service/kinesis/#Kinesis.GetRecords
+	// But it's not a constant?
+	ErrCodeKMSThrottlingException = "KMSThrottlingException"
+)
 
 // RecordConsumer is the interface consumers will implement
 type RecordConsumer interface {
 	Init(string) error
-	ProcessRecords([]*Records, Checkpointer)
+	ProcessRecords([]*Records, *KinesisConsumer)
 	Shutdown()
 }
 
@@ -107,6 +113,11 @@ func (kc *KinesisConsumer) StartConsumer() error {
 			if shard.AssignedTo == kc.consumerID {
 				continue
 			}
+			_, err := kc.checkpointer.FetchCheckpoint(shard.ID)
+			// TODO: Retry fetching checkpoint if it fails?
+			if err == ErrSequenceIDNotFound {
+				kc.checkpointer.CheckpointSequence(shard.ID, nil, kc.consumerID)
+			}
 
 			kc.RecordConsumer.Init(shard.ID)
 			shard.AssignedTo = kc.consumerID
@@ -119,7 +130,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 			kc.Shutdown()
 			return nil
 		case <-*kc.stop:
-			log.Info("Received stop signal")
+			log.Info("Shutting down")
 			return nil
 		case <-time.After(1 * time.Second):
 		}
@@ -130,6 +141,11 @@ func (kc *KinesisConsumer) StartConsumer() error {
 func (kc *KinesisConsumer) Shutdown() {
 	close(*kc.stop)
 	time.Sleep(1 * time.Second)
+}
+
+// CheckpointSequence writes a checkpoint at the designated sequence ID
+func (kc *KinesisConsumer) CheckpointSequence(shardID string, sequenceID *string) error {
+	return kc.checkpointer.CheckpointSequence(shardID, sequenceID, kc.consumerID)
 }
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
@@ -170,7 +186,7 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 }
 
 func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
-	shardIterator, err := kc.checkpointer.FetchCheckpoint(shardID)
+	sequenceID, err := kc.checkpointer.FetchCheckpoint(shardID)
 	if err != nil {
 		if err != ErrSequenceIDNotFound {
 			return nil, err
@@ -187,7 +203,17 @@ func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
 		return iterResp.ShardIterator, nil
 	}
 
-	return shardIterator, nil
+	shardIterArgs := &kinesis.GetShardIteratorInput{
+		ShardId:                aws.String(shardID),
+		ShardIteratorType:      aws.String("AFTER_SEQUENCE_NUMBER"),
+		StartingSequenceNumber: sequenceID,
+		StreamName:             aws.String(kc.StreamName),
+	}
+	iterResp, err := kc.svc.GetShardIterator(shardIterArgs)
+	if err != nil {
+		return nil, err
+	}
+	return iterResp.ShardIterator, nil
 }
 
 func (kc *KinesisConsumer) getRecords(shardID string) {
@@ -202,8 +228,13 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		}
 		getResp, err := kc.svc.GetRecords(getRecordsArgs)
 		if err != nil {
-			log.Errorf("Error getting records from shard %v: %v", shardID, err)
-			continue
+			if awsErr, ok := err.(awserr.Error); ok {
+				if awsErr.Code() == kinesis.ErrCodeProvisionedThroughputExceededException || awsErr.Code() == ErrCodeKMSThrottlingException {
+					log.Errorf("Error getting records from shard %v: %v", shardID, err)
+					continue
+				}
+			}
+			log.Fatalf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs)
 		}
 
 		var records []*Records
@@ -216,6 +247,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			records = append(records, record)
 			log.Debugf("Processing record %s", *r.SequenceNumber)
 		}
+		kc.RecordConsumer.ProcessRecords(records, kc)
+
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
 		}
