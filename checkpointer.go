@@ -3,11 +3,14 @@ package gokini
 import (
 	"errors"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/matryer/try"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -25,6 +28,7 @@ var ErrSequenceIDNotFound = errors.New("SequenceIDNotFoundForShard")
 type DynamoCheckpoint struct {
 	TableName string
 	svc       dynamodbiface.DynamoDBAPI
+	Retries   int
 }
 
 // Init initialises the DynamoDB Checkpoint
@@ -115,21 +119,46 @@ func (checkpointer *DynamoCheckpoint) doesTableExist() bool {
 }
 
 func (checkpointer *DynamoCheckpoint) saveItem(item map[string]*dynamodb.AttributeValue) error {
-	_, err := checkpointer.svc.PutItem(&dynamodb.PutItemInput{
-		TableName: aws.String(checkpointer.TableName),
-		Item:      item,
+	return try.Do(func(attempt int) (bool, error) {
+		_, err := checkpointer.svc.PutItem(&dynamodb.PutItemInput{
+			TableName: aws.String(checkpointer.TableName),
+			Item:      item,
+		})
+		if awsErr, ok := err.(awserr.Error); ok {
+			if awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException ||
+				awsErr.Code() == dynamodb.ErrCodeInternalServerError &&
+					attempt < checkpointer.Retries {
+				// Backoff time as recommended by https://docs.aws.amazon.com/general/latest/gr/api-retries.html
+				time.Sleep(time.Duration(2^attempt*100) * time.Millisecond)
+				return true, err
+			}
+		}
+		return false, err
 	})
-	return err
 }
 
 func (checkpointer *DynamoCheckpoint) getItem(shardID string) (map[string]*dynamodb.AttributeValue, error) {
-	item, err := checkpointer.svc.GetItem(&dynamodb.GetItemInput{
-		TableName: aws.String(checkpointer.TableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"ShardID": {
-				S: aws.String(shardID),
+	var item *dynamodb.GetItemOutput
+	err := try.Do(func(attempt int) (bool, error) {
+		var err error
+		item, err = checkpointer.svc.GetItem(&dynamodb.GetItemInput{
+			TableName: aws.String(checkpointer.TableName),
+			Key: map[string]*dynamodb.AttributeValue{
+				"ShardID": {
+					S: aws.String(shardID),
+				},
 			},
-		},
+		})
+		if awsErr, ok := err.(awserr.Error); ok {
+			if awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException ||
+				awsErr.Code() == dynamodb.ErrCodeInternalServerError &&
+					attempt < checkpointer.Retries {
+				// Backoff time as recommended by https://docs.aws.amazon.com/general/latest/gr/api-retries.html
+				time.Sleep(time.Duration(2^attempt*100) * time.Millisecond)
+				return true, err
+			}
+		}
+		return false, err
 	})
 	return item.Item, err
 }

@@ -91,7 +91,6 @@ func pushRecordToKinesis(streamName string, record []byte) error {
 	})
 	if err != nil {
 		log.Errorf("Error creating kinesis stream %s", err)
-		return err
 	}
 	time.Sleep(500 * time.Millisecond)
 	_, err = svc.PutRecord(&kinesis.PutRecordInput{

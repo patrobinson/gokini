@@ -81,6 +81,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		kc.svc = kinesis.New(session)
 		kc.checkpointer = &DynamoCheckpoint{
 			TableName: kc.TableName,
+			Retries:   5,
 		}
 	}
 
@@ -114,7 +115,6 @@ func (kc *KinesisConsumer) StartConsumer() error {
 				continue
 			}
 			_, err := kc.checkpointer.FetchCheckpoint(shard.ID)
-			// TODO: Retry fetching checkpoint if it fails?
 			if err == ErrSequenceIDNotFound {
 				kc.checkpointer.CheckpointSequence(shard.ID, nil, kc.consumerID)
 			}
