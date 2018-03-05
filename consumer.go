@@ -222,6 +222,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		log.Fatalf("Unable to get shard iterator for %s: %s", shardID, err)
 	}
 
+	var retriedErrors int
+
 	for {
 		getRecordsArgs := &kinesis.GetRecordsInput{
 			ShardIterator: shardIterator,
@@ -231,11 +233,14 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			if awsErr, ok := err.(awserr.Error); ok {
 				if awsErr.Code() == kinesis.ErrCodeProvisionedThroughputExceededException || awsErr.Code() == ErrCodeKMSThrottlingException {
 					log.Errorf("Error getting records from shard %v: %v", shardID, err)
+					retriedErrors++
+					time.Sleep(time.Duration(2^retriedErrors*100) * time.Millisecond)
 					continue
 				}
 			}
 			log.Fatalf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs)
 		}
+		retriedErrors = 0
 
 		var records []*Records
 		for _, r := range getResp.Records {
