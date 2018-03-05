@@ -5,6 +5,7 @@ package gokini
 import (
 	"fmt"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -13,59 +14,67 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type PrintRecordConsumer struct {
-	shardID string
+type IntegrationRecordConsumer struct {
+	shardID          string
+	processedRecords map[string]int
 }
 
-func (p *PrintRecordConsumer) Init(shardID string) error {
-	fmt.Printf("Checkpointer initializing\n")
+func (p *IntegrationRecordConsumer) Init(shardID string) error {
 	p.shardID = shardID
 	return nil
 }
 
-func (p *PrintRecordConsumer) ProcessRecords(records []*Records, checkpointer Checkpointer) {
+func (p *IntegrationRecordConsumer) ProcessRecords(records []*Records, consumer *KinesisConsumer) {
 	if len(records) > 0 {
-		fmt.Printf("%s\n", records[0].Data)
-		err := checkpointer.CheckpointSequence(p.shardID, &records[len(records)-1].SequenceNumber)
-		if err != nil {
-			fmt.Printf("Error checkpointing sequence\n")
+		consumer.CheckpointSequence(p.shardID, &records[len(records)-1].SequenceNumber)
+		for _, record := range records {
+			p.processedRecords[record.SequenceNumber] += 1
 		}
 	}
 }
 
-func (p *PrintRecordConsumer) Shutdown() {
-	fmt.Print("PrintRecordConsumer Shutdown\n")
-}
+func (p *IntegrationRecordConsumer) Shutdown() {}
 
-func ExampleRecordConsumer() {
-	log.SetLevel(log.DebugLevel)
-
-	// An implementation of the RecordConsumer interface that prints out records
-	rc := &PrintRecordConsumer{}
+func TestCheckpointRecovery(t *testing.T) {
+	rc := &IntegrationRecordConsumer{
+		processedRecords: make(map[string]int),
+	}
 	kc := &KinesisConsumer{
-		StreamName:           "KINESIS_STREAM",
+		StreamName:           "checkpoint_recovery",
 		ShardIteratorType:    "TRIM_HORIZON",
 		RecordConsumer:       rc,
-		TableName:            "gokini",
+		TableName:            "checkpoint_recovery",
 		EmptyRecordBackoffMs: 1000,
 	}
-	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"))
+	pushRecordToKinesis("checkpoint_recovery", []byte("abcd"))
 
-	go func() {
-		err := kc.StartConsumer()
-		if err != nil {
-			fmt.Printf("Failed to start consumer: %s", err)
-		}
-	}()
+	go startConsumer(kc, t)
 
-	// Wait for it to do it's thing
 	time.Sleep(1 * time.Second)
 	kc.Shutdown()
 
-	// Output:
-	// Checkpointer initializing
-	// foo
-	// PrintRecordConsumer Shutdown
+	kc = &KinesisConsumer{
+		StreamName:        "checkpoint_recovery",
+		ShardIteratorType: "TRIM_HORIZON",
+		RecordConsumer:    rc,
+		TableName:         "checkpoint_recovery",
+	}
+
+	go startConsumer(kc, t)
+	time.Sleep(1 * time.Second)
+	for sequenceID, timesSequenceProcessed := range rc.processedRecords {
+		fmt.Printf("seqenceID: %s, processed %d time(s)\n", sequenceID, timesSequenceProcessed)
+		if timesSequenceProcessed > 1 {
+			t.Errorf("Sequence number %s was processed more than once", sequenceID)
+		}
+	}
+}
+
+func startConsumer(kc *KinesisConsumer, t *testing.T) {
+	err := kc.StartConsumer()
+	if err != nil {
+		t.Fatalf("Failed to start consumer: %s", err)
+	}
 }
 
 func pushRecordToKinesis(streamName string, record []byte) error {
