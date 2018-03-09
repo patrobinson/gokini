@@ -100,13 +100,25 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	kc.stop = &stopChan
 
 	kc.consumerID = uuid.New().String()
+	err := kc.getShardIDs("")
+	if err != nil {
+		log.Errorf("Error getting Kinesis shards: %s", err)
+		return err
+	}
+	go kc.eventLoop()
 
+	return nil
+}
+
+func (kc *KinesisConsumer) eventLoop() {
 	for {
 		log.Debug("Getting shards")
 		var err error
 		err = kc.getShardIDs("")
 		if err != nil {
-			return err
+			log.Errorf("Error getting Kinesis shards: %s", err)
+			// Back-off?
+			time.Sleep(500 * time.Millisecond)
 		}
 		log.Debugf("Found %d shards", len(kc.shardStatus))
 
@@ -125,13 +137,13 @@ func (kc *KinesisConsumer) StartConsumer() error {
 			go kc.getRecords(shard.ID)
 		}
 		select {
-		case sig := <-sigs:
+		case sig := <-*kc.sigs:
 			log.Infof("Received signal %s. Exiting", sig)
 			kc.Shutdown()
-			return nil
+			return
 		case <-*kc.stop:
 			log.Info("Shutting down")
-			return nil
+			return
 		case <-time.After(1 * time.Second):
 		}
 	}

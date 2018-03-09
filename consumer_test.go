@@ -110,8 +110,10 @@ func TestStartConsumer(t *testing.T) {
 		svc:               kinesisSvc,
 	}
 
-	go kc.StartConsumer()
-	time.Sleep(1 * time.Second)
+	err := kc.StartConsumer()
+	if err != nil {
+		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
+	}
 	kc.Shutdown()
 	if consumer.ShardID != "00000001" {
 		t.Errorf("Expected shardId to be set to 00000001, but got: %s", consumer.ShardID)
@@ -140,7 +142,10 @@ func TestStartConsumer(t *testing.T) {
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
-	go kc.StartConsumer()
+	err = kc.StartConsumer()
+	if err != nil {
+		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
+	}
 	time.Sleep(1 * time.Second)
 	kc.Shutdown()
 	if len(consumer.Records) != 2 {
@@ -170,7 +175,10 @@ func TestStartConsumer(t *testing.T) {
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 	}
-	go kc.StartConsumer()
+	err = kc.StartConsumer()
+	if err != nil {
+		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
+	}
 	if kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
