@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 
 const (
 	defaultEmptyRecordBackoffMs = 500
-	// This is defined in the API Reference https://docs.aws.amazon.com/sdk-for-go/api/service/kinesis/#Kinesis.GetRecords
+	// ErrCodeKMSThrottlingException is defined in the API Reference https://docs.aws.amazon.com/sdk-for-go/api/service/kinesis/#Kinesis.GetRecords
 	// But it's not a constant?
 	ErrCodeKMSThrottlingException = "KMSThrottlingException"
 )
@@ -41,6 +42,7 @@ type shardStatus struct {
 	ID         string
 	Checkpoint string
 	AssignedTo string
+	mux        *sync.Mutex
 }
 
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
@@ -60,6 +62,7 @@ type KinesisConsumer struct {
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
+	log.SetLevel(log.DebugLevel)
 	// Set Defaults
 	if kc.EmptyRecordBackoffMs == 0 {
 		kc.EmptyRecordBackoffMs = defaultEmptyRecordBackoffMs
@@ -123,16 +126,18 @@ func (kc *KinesisConsumer) eventLoop() {
 		log.Debugf("Found %d shards", len(kc.shardStatus))
 
 		for _, shard := range kc.shardStatus {
-			if shard.AssignedTo == kc.consumerID {
+			_, assignedTo, err := kc.checkpointer.FetchCheckpoint(shard.ID)
+			if assignedTo != nil && *assignedTo == kc.consumerID {
 				continue
 			}
-			_, err := kc.checkpointer.FetchCheckpoint(shard.ID)
 			if err == ErrSequenceIDNotFound {
-				kc.checkpointer.CheckpointSequence(shard.ID, nil, kc.consumerID)
+				kc.CheckpointSequence(shard.ID, "")
 			}
 
 			kc.RecordConsumer.Init(shard.ID)
+			shard.mux.Lock()
 			shard.AssignedTo = kc.consumerID
+			shard.mux.Unlock()
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
 			go kc.getRecords(shard.ID)
 		}
@@ -156,7 +161,7 @@ func (kc *KinesisConsumer) Shutdown() {
 }
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID
-func (kc *KinesisConsumer) CheckpointSequence(shardID string, sequenceID *string) error {
+func (kc *KinesisConsumer) CheckpointSequence(shardID string, sequenceID string) error {
 	return kc.checkpointer.CheckpointSequence(shardID, sequenceID, kc.consumerID)
 }
 
@@ -181,7 +186,8 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 		if _, ok := kc.shardStatus[*s.ShardId]; !ok {
 			log.Debugf("Found shard with id %s", *s.ShardId)
 			kc.shardStatus[*s.ShardId] = &shardStatus{
-				ID: *s.ShardId,
+				ID:  *s.ShardId,
+				mux: &sync.Mutex{},
 			}
 		}
 		lastShardID = *s.ShardId
@@ -198,11 +204,12 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 }
 
 func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
-	sequenceID, err := kc.checkpointer.FetchCheckpoint(shardID)
-	if err != nil {
-		if err != ErrSequenceIDNotFound {
-			return nil, err
-		}
+	sequenceID, _, err := kc.checkpointer.FetchCheckpoint(shardID)
+	if err != nil && err != ErrSequenceIDNotFound {
+		return nil, err
+	}
+
+	if sequenceID == nil || *sequenceID == "" {
 		shardIterArgs := &kinesis.GetShardIteratorInput{
 			ShardId:           aws.String(shardID),
 			ShardIteratorType: aws.String(kc.ShardIteratorType),
@@ -265,9 +272,16 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			log.Debugf("Processing record %s", *r.SequenceNumber)
 		}
 		kc.RecordConsumer.ProcessRecords(records, kc)
+		shard := kc.shardStatus[shardID]
 
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
+		} else {
+			checkpoint := *getResp.Records[len(getResp.Records)-1].SequenceNumber
+			kc.CheckpointSequence(shard.ID, checkpoint)
+			shard.mux.Lock()
+			shard.Checkpoint = checkpoint
+			shard.mux.Unlock()
 		}
 
 		// The shard has been closed, so no new records can be read from it

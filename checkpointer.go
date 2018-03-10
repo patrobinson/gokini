@@ -17,8 +17,8 @@ import (
 // Checkpointer handles checkpointing when a record has been processed
 type Checkpointer interface {
 	Init() error
-	CheckpointSequence(string, *string, string) error
-	FetchCheckpoint(string) (*string, error)
+	CheckpointSequence(string, string, string) error
+	FetchCheckpoint(string) (*string, *string, error)
 }
 
 // ErrSequenceIDNotFound is returned by FetchCheckpoint when no SequenceID is found
@@ -56,13 +56,13 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 }
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID
-func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenceID *string, assignedTo string) error {
+func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenceID string, assignedTo string) error {
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
 		"ShardID": {
 			S: &shardID,
 		},
 		"SequenceID": {
-			S: sequenceID,
+			S: &sequenceID,
 		},
 		"AssignedTo": {
 			S: &assignedTo,
@@ -72,18 +72,18 @@ func (checkpointer *DynamoCheckpoint) CheckpointSequence(shardID string, sequenc
 }
 
 // FetchCheckpoint retrieves the checkpoint for the given shard
-func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shardID string) (*string, error) {
+func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shardID string) (*string, *string, error) {
 	checkpoint, err := checkpointer.getItem(shardID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sequenceID, ok := checkpoint["SequenceID"]
-	if !ok || sequenceID.S == nil {
-		return nil, ErrSequenceIDNotFound
+	if !ok {
+		return nil, nil, ErrSequenceIDNotFound
 	}
 	log.Debugf("Retrieved Shard Iterator %s", *sequenceID.S)
-	return (*sequenceID).S, nil
+	return (*sequenceID).S, checkpoint["AssignedTo"].S, nil
 }
 
 func (checkpointer *DynamoCheckpoint) createTable() error {

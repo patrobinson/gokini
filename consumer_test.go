@@ -1,6 +1,7 @@
 package gokini
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -60,24 +61,35 @@ func (k *mockKinesisClient) DescribeStream(args *kinesis.DescribeStreamInput) (*
 
 type mockCheckpointer struct {
 	checkpointFound bool
+	checkpoint      map[string]*shardStatus
 }
 
 func (c *mockCheckpointer) Init() error {
+	c.checkpoint = make(map[string]*shardStatus)
 	return nil
 }
 
-func (c *mockCheckpointer) CheckpointSequence(string, *string, string) error {
+func (c *mockCheckpointer) CheckpointSequence(shardID string, sequenceID string, assignedTo string) error {
+	c.checkpoint[shardID] = &shardStatus{
+		ID:         shardID,
+		AssignedTo: assignedTo,
+		Checkpoint: sequenceID,
+	}
 	return nil
 }
-func (c *mockCheckpointer) FetchCheckpoint(string) (*string, error) {
+func (c *mockCheckpointer) FetchCheckpoint(shardID string) (*string, *string, error) {
 	if c.checkpointFound {
-		return aws.String("0123456789ABCDEF"), nil
+		if shard, ok := c.checkpoint[shardID]; ok {
+			return &shard.Checkpoint, &shard.AssignedTo, nil
+		}
 	}
-	return nil, ErrSequenceIDNotFound
+	checkpoint := ""
+	assignedTo := ""
+	return &checkpoint, &assignedTo, nil
 }
 
 func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.GetRecordsOutput, error) {
-	k.numberRecordsSent = k.numberRecordsSent + 1
+	k.numberRecordsSent++
 	var nextShardIterator *string
 	if k.NumberRecordsBeforeClosing == 0 || k.numberRecordsSent < k.NumberRecordsBeforeClosing {
 		nextShardIterator = aws.String("ABCD1234")
@@ -89,7 +101,7 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 			&kinesis.Record{
 				Data:           k.RecordData,
 				PartitionKey:   aws.String("abcdefg"),
-				SequenceNumber: aws.String("012345"),
+				SequenceNumber: aws.String(strings.Join([]string{"0000", string(k.numberRecordsSent)}, "")),
 			},
 		},
 	}, nil
@@ -135,6 +147,9 @@ func TestStartConsumer(t *testing.T) {
 		NumberRecordsBeforeClosing: 2,
 		RecordData:                 []byte("Hello World"),
 	}
+	checkpointer = &mockCheckpointer{
+		checkpointFound: true,
+	}
 	kc = &KinesisConsumer{
 		StreamName:        "FOO",
 		ShardIteratorType: "TRIM_HORIZON",
@@ -149,7 +164,7 @@ func TestStartConsumer(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	kc.Shutdown()
 	if len(consumer.Records) != 2 {
-		t.Errorf("Expected there to be two records from Kinesis, got %d", len(consumer.Records))
+		t.Errorf("Expected there to be two records from Kinesis, got %s", consumer.Records)
 	}
 
 	if !kinesisSvc.getShardIteratorCalled {
