@@ -69,23 +69,18 @@ func (c *mockCheckpointer) Init() error {
 	return nil
 }
 
-func (c *mockCheckpointer) CheckpointSequence(shardID string, sequenceID string, assignedTo string) error {
-	c.checkpoint[shardID] = &shardStatus{
-		ID:         shardID,
-		AssignedTo: assignedTo,
-		Checkpoint: sequenceID,
-	}
+func (c *mockCheckpointer) CheckpointSequence(shard *shardStatus) error {
+	c.checkpoint[shard.ID] = shard
 	return nil
 }
-func (c *mockCheckpointer) FetchCheckpoint(shardID string) (*string, *string, error) {
+func (c *mockCheckpointer) FetchCheckpoint(shard *shardStatus) error {
 	if c.checkpointFound {
-		if shard, ok := c.checkpoint[shardID]; ok {
-			return &shard.Checkpoint, &shard.AssignedTo, nil
+		if checkpointShard, ok := c.checkpoint[shard.ID]; ok {
+			shard.Checkpoint = checkpointShard.Checkpoint
+			shard.AssignedTo = checkpointShard.AssignedTo
 		}
 	}
-	checkpoint := ""
-	assignedTo := ""
-	return &checkpoint, &assignedTo, nil
+	return nil
 }
 
 func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.GetRecordsOutput, error) {

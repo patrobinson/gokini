@@ -20,7 +20,6 @@ func (p *IntegrationRecordConsumer) Init(shardID string) error {
 
 func (p *IntegrationRecordConsumer) ProcessRecords(records []*Records, consumer *KinesisConsumer) {
 	if len(records) > 0 {
-		consumer.CheckpointSequence(p.shardID, records[len(records)-1].SequenceNumber)
 		for _, record := range records {
 			p.processedRecords[record.SequenceNumber] += 1
 		}

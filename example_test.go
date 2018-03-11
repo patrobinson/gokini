@@ -20,10 +20,6 @@ func (p *PrintRecordConsumer) Init(shardID string) error {
 func (p *PrintRecordConsumer) ProcessRecords(records []*Records, consumer *KinesisConsumer) {
 	if len(records) > 0 {
 		fmt.Printf("%s\n", records[0].Data)
-		err := consumer.CheckpointSequence(p.shardID, records[len(records)-1].SequenceNumber)
-		if err != nil {
-			fmt.Printf("Error checkpointing sequence\n")
-		}
 	}
 }
 

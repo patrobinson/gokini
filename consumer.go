@@ -126,12 +126,12 @@ func (kc *KinesisConsumer) eventLoop() {
 		log.Debugf("Found %d shards", len(kc.shardStatus))
 
 		for _, shard := range kc.shardStatus {
-			_, assignedTo, err := kc.checkpointer.FetchCheckpoint(shard.ID)
-			if assignedTo != nil && *assignedTo == kc.consumerID {
+			kc.checkpointer.FetchCheckpoint(shard)
+			if shard.AssignedTo == kc.consumerID {
 				continue
 			}
 			if err == ErrSequenceIDNotFound {
-				kc.CheckpointSequence(shard.ID, "")
+				kc.CheckpointSequence(shard)
 			}
 
 			kc.RecordConsumer.Init(shard.ID)
@@ -161,8 +161,8 @@ func (kc *KinesisConsumer) Shutdown() {
 }
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID
-func (kc *KinesisConsumer) CheckpointSequence(shardID string, sequenceID string) error {
-	return kc.checkpointer.CheckpointSequence(shardID, sequenceID, kc.consumerID)
+func (kc *KinesisConsumer) CheckpointSequence(shard *shardStatus) error {
+	return kc.checkpointer.CheckpointSequence(shard)
 }
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
@@ -203,17 +203,17 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 	return nil
 }
 
-func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
-	sequenceID, _, err := kc.checkpointer.FetchCheckpoint(shardID)
+func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error) {
+	err := kc.checkpointer.FetchCheckpoint(shard)
 	if err != nil && err != ErrSequenceIDNotFound {
 		return nil, err
 	}
 
-	if sequenceID == nil || *sequenceID == "" {
+	if shard.Checkpoint == "" {
 		shardIterArgs := &kinesis.GetShardIteratorInput{
-			ShardId:           aws.String(shardID),
-			ShardIteratorType: aws.String(kc.ShardIteratorType),
-			StreamName:        aws.String(kc.StreamName),
+			ShardId:           &shard.ID,
+			ShardIteratorType: &kc.ShardIteratorType,
+			StreamName:        &kc.StreamName,
 		}
 		iterResp, err := kc.svc.GetShardIterator(shardIterArgs)
 		if err != nil {
@@ -223,10 +223,10 @@ func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
 	}
 
 	shardIterArgs := &kinesis.GetShardIteratorInput{
-		ShardId:                aws.String(shardID),
+		ShardId:                &shard.ID,
 		ShardIteratorType:      aws.String("AFTER_SEQUENCE_NUMBER"),
-		StartingSequenceNumber: sequenceID,
-		StreamName:             aws.String(kc.StreamName),
+		StartingSequenceNumber: &shard.Checkpoint,
+		StreamName:             &kc.StreamName,
 	}
 	iterResp, err := kc.svc.GetShardIterator(shardIterArgs)
 	if err != nil {
@@ -236,7 +236,7 @@ func (kc *KinesisConsumer) getShardIterator(shardID string) (*string, error) {
 }
 
 func (kc *KinesisConsumer) getRecords(shardID string) {
-	shardIterator, err := kc.getShardIterator(shardID)
+	shardIterator, err := kc.getShardIterator(kc.shardStatus[shardID])
 	if err != nil {
 		log.Fatalf("Unable to get shard iterator for %s: %s", shardID, err)
 	}
@@ -278,10 +278,10 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
 		} else {
 			checkpoint := *getResp.Records[len(getResp.Records)-1].SequenceNumber
-			kc.CheckpointSequence(shard.ID, checkpoint)
 			shard.mux.Lock()
 			shard.Checkpoint = checkpoint
 			shard.mux.Unlock()
+			kc.CheckpointSequence(shard)
 		}
 
 		// The shard has been closed, so no new records can be read from it
