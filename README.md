@@ -25,3 +25,15 @@ This project aims to provide feature parity with the [Kinesis Client Library](ht
 ## Development Status
 
 Beta - Ready to be used in non-critical Production environments.
+
+## Testing
+
+Unit tests can be run with:
+```
+go test consumer_test.go consumer.go checkpointer_test.go checkpointer.go
+```
+
+Integration tests can be run in docker with:
+```
+make docker-integration
+```
