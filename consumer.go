@@ -140,7 +140,7 @@ func (kc *KinesisConsumer) eventLoop() {
 				}
 			}
 
-			leaseTimeout, err := kc.checkpointer.GetLease(shard, kc.consumerID)
+			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
 				if err.Error() == ErrLeaseNotAquired {
 					continue
@@ -149,10 +149,6 @@ func (kc *KinesisConsumer) eventLoop() {
 			}
 
 			kc.RecordConsumer.Init(shard.ID)
-			shard.mux.Lock()
-			shard.AssignedTo = kc.consumerID
-			shard.LeaseTimeout = leaseTimeout
-			shard.mux.Unlock()
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
 			go kc.getRecords(shard.ID)
 		}

@@ -25,7 +25,7 @@ const (
 // Checkpointer handles checkpointing when a record has been processed
 type Checkpointer interface {
 	Init() error
-	GetLease(*shardStatus, string) (time.Time, error)
+	GetLease(*shardStatus, string) error
 	CheckpointSequence(*shardStatus) error
 	FetchCheckpoint(*shardStatus) error
 }
@@ -70,12 +70,12 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 }
 
 // GetLease attempts to gain a lock on the given shard
-func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) (time.Time, error) {
+func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) error {
 	newLeaseTimeout := time.Now().Add(time.Duration(checkpointer.LeaseDuration) * time.Second).UTC()
 	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339)
 	currentCheckpoint, err := checkpointer.getItem(shard.ID)
 	if err != nil {
-		return time.Time{}, err
+		return err
 	}
 
 	assignedVar, assignedToOk := currentCheckpoint["AssignedTo"]
@@ -90,10 +90,10 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 
 		currentLeaseTimeout, err := time.Parse(time.RFC3339, leaseTimeout)
 		if err != nil {
-			return time.Time{}, err
+			return err
 		}
 		if !time.Now().UTC().After(currentLeaseTimeout) && assignedTo != newAssignTo {
-			return time.Time{}, errors.New(ErrLeaseNotAquired)
+			return errors.New(ErrLeaseNotAquired)
 		}
 		log.Debugf("Attempting to get a lock for shard: %s, leaseTimeout: %s, assignedTo: %s", shard.ID, currentLeaseTimeout, assignedTo)
 		conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
@@ -132,13 +132,18 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == dynamodb.ErrCodeConditionalCheckFailedException {
-				return time.Time{}, errors.New(ErrLeaseNotAquired)
+				return errors.New(ErrLeaseNotAquired)
 			}
 		}
-		return time.Time{}, err
+		return err
 	}
 
-	return newLeaseTimeout, nil
+	shard.mux.Lock()
+	shard.AssignedTo = newAssignTo
+	shard.LeaseTimeout = newLeaseTimeout
+	shard.mux.Unlock()
+
+	return nil
 }
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID

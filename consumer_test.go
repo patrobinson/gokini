@@ -69,8 +69,12 @@ func (c *mockCheckpointer) Init() error {
 	return nil
 }
 
-func (c *mockCheckpointer) GetLease(shard *shardStatus, assignTo string) (time.Time, error) {
-	return time.Now(), nil
+func (c *mockCheckpointer) GetLease(shard *shardStatus, assignTo string) error {
+	shard.mux.Lock()
+	shard.AssignedTo = assignTo
+	shard.LeaseTimeout = time.Now()
+	shard.mux.Unlock()
+	return nil
 }
 
 func (c *mockCheckpointer) CheckpointSequence(shard *shardStatus) error {
@@ -196,6 +200,5 @@ func TestStartConsumer(t *testing.T) {
 	if kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
-	time.Sleep(1 * time.Second)
 	kc.Shutdown()
 }

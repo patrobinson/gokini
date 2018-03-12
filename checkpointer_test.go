@@ -62,7 +62,7 @@ func TestGetLeaseNotAquired(t *testing.T) {
 	}
 	checkpoint.Init()
 	checkpoint.svc = svc
-	_, err := checkpoint.GetLease(&shardStatus{
+	err := checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
 		mux:        &sync.Mutex{},
@@ -71,7 +71,7 @@ func TestGetLeaseNotAquired(t *testing.T) {
 		t.Errorf("Error getting lease %s", err)
 	}
 
-	_, err = checkpoint.GetLease(&shardStatus{
+	err = checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
 		mux:        &sync.Mutex{},
@@ -104,7 +104,7 @@ func TestGetLeaseAquired(t *testing.T) {
 		Item:      marshalledCheckpoint,
 	}
 	checkpoint.svc.PutItem(input)
-	_, err := checkpoint.GetLease(&shardStatus{
+	err := checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
 		mux:        &sync.Mutex{},
@@ -123,7 +123,7 @@ func TestGetLeaseRenewed(t *testing.T) {
 	}
 	checkpoint.Init()
 	checkpoint.svc = svc
-	_, err := checkpoint.GetLease(&shardStatus{
+	err := checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
 		mux:        &sync.Mutex{},
@@ -132,7 +132,7 @@ func TestGetLeaseRenewed(t *testing.T) {
 		t.Errorf("Error getting lease %s", err)
 	}
 
-	_, err = checkpoint.GetLease(&shardStatus{
+	err = checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
 		mux:        &sync.Mutex{},
