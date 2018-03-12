@@ -54,6 +54,7 @@ func TestCheckpointRecovery(t *testing.T) {
 		ShardIteratorType: "TRIM_HORIZON",
 		RecordConsumer:    rc,
 		TableName:         "checkpoint_recovery",
+		LeaseDuration:     1,
 	}
 
 	err = kc.StartConsumer()

@@ -11,12 +11,19 @@ import (
 )
 
 func pushRecordToKinesis(streamName string, record []byte) error {
-	session, err := session.NewSessionWithOptions(session.Options{SharedConfigState: session.SharedConfigEnable})
+	session, err := session.NewSessionWithOptions(
+		session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+			Config: aws.Config{
+				CredentialsChainVerboseErrors: aws.Bool(true),
+				Endpoint:                      aws.String(os.Getenv("KINESIS_ENDPOINT")),
+			},
+		},
+	)
 	if err != nil {
 		log.Errorf("Error starting kinesis client %s", err)
 		return err
 	}
-	session.Config.Endpoint = aws.String(os.Getenv("KINESIS_ENDPOINT"))
 	svc := kinesis.New(session)
 	_, err = svc.CreateStream(&kinesis.CreateStreamInput{
 		ShardCount: aws.Int64(1),

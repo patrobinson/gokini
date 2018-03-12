@@ -14,9 +14,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	defaultLeaseDuration = 30
+	// ErrLeaseNotAquired is returned when we failed to get a lock on the shard
+	ErrLeaseNotAquired = "Lease is already held by another node"
+	// ErrInvalidDynamoDBSchema is returned when there are one or more fields missing from the table
+	ErrInvalidDynamoDBSchema = "The DynamoDB schema is invalid and may need to be re-created"
+)
+
 // Checkpointer handles checkpointing when a record has been processed
 type Checkpointer interface {
 	Init() error
+	GetLease(*shardStatus, string) (time.Time, error)
 	CheckpointSequence(*shardStatus) error
 	FetchCheckpoint(*shardStatus) error
 }
@@ -26,9 +35,10 @@ var ErrSequenceIDNotFound = errors.New("SequenceIDNotFoundForShard")
 
 // DynamoCheckpoint implements the Checkpoint interface using DynamoDB as a backend
 type DynamoCheckpoint struct {
-	TableName string
-	svc       dynamodbiface.DynamoDBAPI
-	Retries   int
+	TableName     string
+	LeaseDuration int
+	svc           dynamodbiface.DynamoDBAPI
+	Retries       int
 }
 
 // Init initialises the DynamoDB Checkpoint
@@ -49,14 +59,91 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 
 	checkpointer.svc = dynamodb.New(session)
 
+	if checkpointer.LeaseDuration == 0 {
+		checkpointer.LeaseDuration = defaultLeaseDuration
+	}
+
 	if !checkpointer.doesTableExist() {
 		return checkpointer.createTable()
 	}
 	return nil
 }
 
+// GetLease attempts to gain a lock on the given shard
+func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) (time.Time, error) {
+	newLeaseTimeout := time.Now().Add(time.Duration(checkpointer.LeaseDuration) * time.Second).UTC()
+	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339)
+	currentCheckpoint, err := checkpointer.getItem(shard.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	assignedVar, assignedToOk := currentCheckpoint["AssignedTo"]
+	leaseVar, leaseTimeoutOk := currentCheckpoint["LeaseTimeout"]
+	var conditionalExpression string
+	var expressionAttributeValues map[string]*dynamodb.AttributeValue
+	if !leaseTimeoutOk || !assignedToOk {
+		conditionalExpression = "attribute_not_exists(AssignedTo)"
+	} else {
+		assignedTo := *assignedVar.S
+		leaseTimeout := *leaseVar.S
+
+		currentLeaseTimeout, err := time.Parse(time.RFC3339, leaseTimeout)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if !time.Now().UTC().After(currentLeaseTimeout) && assignedTo != newAssignTo {
+			return time.Time{}, errors.New(ErrLeaseNotAquired)
+		}
+		log.Debugf("Attempting to get a lock for shard: %s, leaseTimeout: %s, assignedTo: %s", shard.ID, currentLeaseTimeout, assignedTo)
+		conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
+		expressionAttributeValues = map[string]*dynamodb.AttributeValue{
+			":id": {
+				S: &shard.ID,
+			},
+			":assigned_to": {
+				S: &assignedTo,
+			},
+			":lease_timeout": {
+				S: &leaseTimeout,
+			},
+		}
+	}
+
+	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
+		"ShardID": {
+			S: &shard.ID,
+		},
+		"AssignedTo": {
+			S: &newAssignTo,
+		},
+		"LeaseTimeout": {
+			S: &newLeaseTimeoutString,
+		},
+	}
+
+	if shard.Checkpoint != "" {
+		marshalledCheckpoint["Checkpoint"] = &dynamodb.AttributeValue{
+			S: &shard.Checkpoint,
+		}
+	}
+
+	err = checkpointer.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)
+	if err != nil {
+		if awsErr, ok := err.(awserr.Error); ok {
+			if awsErr.Code() == dynamodb.ErrCodeConditionalCheckFailedException {
+				return time.Time{}, errors.New(ErrLeaseNotAquired)
+			}
+		}
+		return time.Time{}, err
+	}
+
+	return newLeaseTimeout, nil
+}
+
 // CheckpointSequence writes a checkpoint at the designated sequence ID
 func (checkpointer *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) error {
+	leaseTimeout := shard.LeaseTimeout.UTC().Format(time.RFC3339)
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
 		"ShardID": {
 			S: &shard.ID,
@@ -66,6 +153,9 @@ func (checkpointer *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) err
 		},
 		"AssignedTo": {
 			S: &shard.AssignedTo,
+		},
+		"LeaseTimeout": {
+			S: &leaseTimeout,
 		},
 	}
 	return checkpointer.saveItem(marshalledCheckpoint)
@@ -126,11 +216,24 @@ func (checkpointer *DynamoCheckpoint) doesTableExist() bool {
 }
 
 func (checkpointer *DynamoCheckpoint) saveItem(item map[string]*dynamodb.AttributeValue) error {
+	return checkpointer.putItem(&dynamodb.PutItemInput{
+		TableName: aws.String(checkpointer.TableName),
+		Item:      item,
+	})
+}
+
+func (checkpointer *DynamoCheckpoint) conditionalUpdate(conditionExpression string, expressionAttributeValues map[string]*dynamodb.AttributeValue, item map[string]*dynamodb.AttributeValue) error {
+	return checkpointer.putItem(&dynamodb.PutItemInput{
+		ConditionExpression: aws.String(conditionExpression),
+		TableName:           aws.String(checkpointer.TableName),
+		Item:                item,
+		ExpressionAttributeValues: expressionAttributeValues,
+	})
+}
+
+func (checkpointer *DynamoCheckpoint) putItem(input *dynamodb.PutItemInput) error {
 	return try.Do(func(attempt int) (bool, error) {
-		_, err := checkpointer.svc.PutItem(&dynamodb.PutItemInput{
-			TableName: aws.String(checkpointer.TableName),
-			Item:      item,
-		})
+		_, err := checkpointer.svc.PutItem(input)
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException ||
 				awsErr.Code() == dynamodb.ErrCodeInternalServerError &&

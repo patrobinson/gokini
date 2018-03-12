@@ -69,6 +69,10 @@ func (c *mockCheckpointer) Init() error {
 	return nil
 }
 
+func (c *mockCheckpointer) GetLease(shard *shardStatus, assignTo string) (time.Time, error) {
+	return time.Now(), nil
+}
+
 func (c *mockCheckpointer) CheckpointSequence(shard *shardStatus) error {
 	c.checkpoint[shard.ID] = shard
 	return nil

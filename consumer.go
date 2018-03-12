@@ -39,10 +39,11 @@ type Records struct {
 }
 
 type shardStatus struct {
-	ID         string
-	Checkpoint string
-	AssignedTo string
-	mux        *sync.Mutex
+	ID           string
+	Checkpoint   string
+	AssignedTo   string
+	mux          *sync.Mutex
+	LeaseTimeout time.Time
 }
 
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
@@ -52,6 +53,7 @@ type KinesisConsumer struct {
 	RecordConsumer       RecordConsumer
 	TableName            string
 	EmptyRecordBackoffMs int
+	LeaseDuration        int
 	svc                  kinesisiface.KinesisAPI
 	checkpointer         Checkpointer
 	stop                 *chan struct{}
@@ -83,8 +85,9 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		}
 		kc.svc = kinesis.New(session)
 		kc.checkpointer = &DynamoCheckpoint{
-			TableName: kc.TableName,
-			Retries:   5,
+			TableName:     kc.TableName,
+			Retries:       5,
+			LeaseDuration: kc.LeaseDuration,
 		}
 	}
 
@@ -116,8 +119,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 func (kc *KinesisConsumer) eventLoop() {
 	for {
 		log.Debug("Getting shards")
-		var err error
-		err = kc.getShardIDs("")
+		err := kc.getShardIDs("")
 		if err != nil {
 			log.Errorf("Error getting Kinesis shards: %s", err)
 			// Back-off?
@@ -126,17 +128,30 @@ func (kc *KinesisConsumer) eventLoop() {
 		log.Debugf("Found %d shards", len(kc.shardStatus))
 
 		for _, shard := range kc.shardStatus {
-			kc.checkpointer.FetchCheckpoint(shard)
+			// We already own this shard so carry on
 			if shard.AssignedTo == kc.consumerID {
 				continue
 			}
-			if err == ErrSequenceIDNotFound {
-				kc.CheckpointSequence(shard)
+
+			err := kc.checkpointer.FetchCheckpoint(shard)
+			if err != nil {
+				if err != ErrSequenceIDNotFound {
+					log.Fatal(err)
+				}
+			}
+
+			leaseTimeout, err := kc.checkpointer.GetLease(shard, kc.consumerID)
+			if err != nil {
+				if err.Error() == ErrLeaseNotAquired {
+					continue
+				}
+				log.Fatal(err)
 			}
 
 			kc.RecordConsumer.Init(shard.ID)
 			shard.mux.Lock()
 			shard.AssignedTo = kc.consumerID
+			shard.LeaseTimeout = leaseTimeout
 			shard.mux.Unlock()
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
 			go kc.getRecords(shard.ID)
@@ -158,11 +173,6 @@ func (kc *KinesisConsumer) eventLoop() {
 func (kc *KinesisConsumer) Shutdown() {
 	close(*kc.stop)
 	time.Sleep(1 * time.Second)
-}
-
-// CheckpointSequence writes a checkpoint at the designated sequence ID
-func (kc *KinesisConsumer) CheckpointSequence(shard *shardStatus) error {
-	return kc.checkpointer.CheckpointSequence(shard)
 }
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
@@ -281,7 +291,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			shard.mux.Lock()
 			shard.Checkpoint = checkpoint
 			shard.mux.Unlock()
-			kc.CheckpointSequence(shard)
+			kc.checkpointer.CheckpointSequence(shard)
 		}
 
 		// The shard has been closed, so no new records can be read from it
