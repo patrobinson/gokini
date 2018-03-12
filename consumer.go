@@ -255,6 +255,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
 				if err.Error() == ErrLeaseNotAquired {
+					shard.mux.Lock()
+					defer shard.mux.Unlock()
 					shard.AssignedTo = ""
 					return
 				}
