@@ -242,7 +242,8 @@ func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error)
 }
 
 func (kc *KinesisConsumer) getRecords(shardID string) {
-	shardIterator, err := kc.getShardIterator(kc.shardStatus[shardID])
+	shard := kc.shardStatus[shardID]
+	shardIterator, err := kc.getShardIterator(shard)
 	if err != nil {
 		log.Fatalf("Unable to get shard iterator for %s: %s", shardID, err)
 	}
@@ -250,6 +251,17 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 	var retriedErrors int
 
 	for {
+		if time.Now().UTC().After(shard.LeaseTimeout.Add(-5 * time.Second)) {
+			err = kc.checkpointer.GetLease(shard, kc.consumerID)
+			if err != nil {
+				if err.Error() == ErrLeaseNotAquired {
+					shard.AssignedTo = ""
+					return
+				}
+				log.Fatal(err)
+			}
+		}
+
 		getRecordsArgs := &kinesis.GetRecordsInput{
 			ShardIterator: shardIterator,
 		}
@@ -278,7 +290,6 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			log.Debugf("Processing record %s", *r.SequenceNumber)
 		}
 		kc.RecordConsumer.ProcessRecords(records, kc)
-		shard := kc.shardStatus[shardID]
 
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
