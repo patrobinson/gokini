@@ -10,19 +10,19 @@ A Golang Kinesis Consumer Library with minimal dependencies. This library does n
 
 This project aims to provide feature parity with the [Kinesis Client Library](https://github.com/awslabs/amazon-kinesis-client) including:
 
-[x] Enumerates shards
+- [x] Enumerates shards
 
-[x] Coordinates shard associations with other workers
+- [x] Coordinates shard associations with other workers
 
-[x] Instantiates a record processor for every shard it manages
+- [x] Instantiates a record processor for every shard it manages
 
-[x] Checkpoints processed records
+- [x] Checkpoints processed records
 
-[ ] Balances shard-worker associations when the worker instance count changes
+- [ ] Balances shard-worker associations when the worker instance count changes
 
-[ ] Balances shard-worker associations when shards are split or merged
+- [ ] Balances shard-worker associations when shards are split or merged
 
-[ ] Instrumentation that supports CloudWatch
+- [ ] Instrumentation that supports CloudWatch
 
 ## Development Status
 
