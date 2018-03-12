@@ -22,6 +22,8 @@ This project aims to provide feature parity with the [Kinesis Client Library](ht
 
 [ ] Balances shard-worker associations when shards are split or merged
 
+[ ] Instrumentation that supports CloudWatch
+
 ## Development Status
 
 Beta - Ready to be used in non-critical Production environments.
