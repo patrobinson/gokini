@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
-	log "github.com/sirupsen/logrus"
 )
 
 type mockDynamoDB struct {
@@ -54,7 +53,6 @@ func TestDoesTableExist(t *testing.T) {
 }
 
 func TestGetLeaseNotAquired(t *testing.T) {
-	log.SetLevel(log.DebugLevel)
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
 		TableName: "TableName",
