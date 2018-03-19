@@ -45,7 +45,7 @@ func ExampleRecordConsumer() {
 	}
 
 	// Wait for it to do it's thing
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 	kc.Shutdown()
 
 	// Output:

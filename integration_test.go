@@ -48,7 +48,7 @@ func TestCheckpointRecovery(t *testing.T) {
 	}
 
 	kc.Shutdown()
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 
 	kc = &KinesisConsumer{
 		StreamName:        "checkpoint_recovery",
@@ -62,7 +62,7 @@ func TestCheckpointRecovery(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error starting consumer %s", err)
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 	for sequenceID, timesSequenceProcessed := range rc.processedRecords {
 		fmt.Printf("seqenceID: %s, processed %d time(s)\n", sequenceID, timesSequenceProcessed)
 		if timesSequenceProcessed > 1 {
@@ -92,7 +92,7 @@ func TestCheckpointGainLock(t *testing.T) {
 	}
 
 	kc.Shutdown()
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 
 	kc = &KinesisConsumer{
 		StreamName:        "checkpoint_gain_lock",
@@ -107,7 +107,7 @@ func TestCheckpointGainLock(t *testing.T) {
 		t.Errorf("Error starting consumer %s", err)
 	}
 	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"))
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 	if len(rc.processedRecords) != 2 {
 		t.Errorf("Expected to have processed 2 records")
 		for sequenceId, timesProcessed := range rc.processedRecords {
