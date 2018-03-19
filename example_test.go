@@ -35,6 +35,8 @@ func ExampleRecordConsumer() {
 		TableName:            "gokini",
 		EmptyRecordBackoffMs: 1000,
 	}
+
+	// Send records to our kinesis stream so we have something to process
 	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"))
 
 	err := kc.StartConsumer()
