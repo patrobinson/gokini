@@ -37,7 +37,7 @@ func ExampleRecordConsumer() {
 	}
 
 	// Send records to our kinesis stream so we have something to process
-	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"))
+	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"), true)
 
 	err := kc.StartConsumer()
 	if err != nil {

@@ -44,7 +44,7 @@ func TestCheckpointRecovery(t *testing.T) {
 		EmptyRecordBackoffMs: 2000,
 		LeaseDuration:        1,
 	}
-	pushRecordToKinesis("checkpoint_recovery", []byte("abcd"))
+	pushRecordToKinesis("checkpoint_recovery", []byte("abcd"), true)
 
 	err := kc.StartConsumer()
 	if err != nil {
@@ -88,7 +88,7 @@ func TestCheckpointGainLock(t *testing.T) {
 		EmptyRecordBackoffMs: 2000,
 		LeaseDuration:        1,
 	}
-	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"))
+	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"), true)
 
 	err := kc.StartConsumer()
 	if err != nil {
@@ -110,7 +110,7 @@ func TestCheckpointGainLock(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error starting consumer %s", err)
 	}
-	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"))
+	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"), false)
 	time.Sleep(200 * time.Millisecond)
 	if len(rc.processedRecords) != 2 {
 		t.Errorf("Expected to have processed 2 records")
@@ -141,7 +141,7 @@ func TestPrometheusMonitoring(t *testing.T) {
 			},
 		},
 	}
-	pushRecordToKinesis("prometheus_monitoring", []byte("abcd"))
+	pushRecordToKinesis("prometheus_monitoring", []byte("abcd"), true)
 
 	err := kc.StartConsumer()
 	if err != nil {
