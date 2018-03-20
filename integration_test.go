@@ -136,7 +136,7 @@ func TestPrometheusMonitoring(t *testing.T) {
 		LeaseDuration:        1,
 		Monitoring: MonitoringConfiguration{
 			MonitoringService: "prometheus",
-			Prometheus: Prometheus{
+			Prometheus: prometheusMonitoringService{
 				ListenAddress: ":8080",
 			},
 		},

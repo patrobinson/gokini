@@ -330,7 +330,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 
 		kc.mService.incrRecordsProcessed(shard.ID, len(records))
 		kc.mService.incrBytesProcessed(shard.ID, recordBytes)
-		kc.mService.millisBehindLatest(shard.ID, *getResp.MillisBehindLatest)
+		kc.mService.millisBehindLatest(shard.ID, float64(*getResp.MillisBehindLatest))
 
 		// Convert from nanoseconds to milliseconds
 		getRecordsTime := time.Since(getRecordsStartTime) / 1000000
