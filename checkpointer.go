@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultLeaseDuration = 30
+	defaultLeaseDuration = 30000
 	// ErrLeaseNotAquired is returned when we failed to get a lock on the shard
 	ErrLeaseNotAquired = "Lease is already held by another node"
 	// ErrInvalidDynamoDBSchema is returned when there are one or more fields missing from the table
@@ -71,7 +71,7 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 
 // GetLease attempts to gain a lock on the given shard
 func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) error {
-	newLeaseTimeout := time.Now().Add(time.Duration(checkpointer.LeaseDuration) * time.Second).UTC()
+	newLeaseTimeout := time.Now().Add(time.Duration(checkpointer.LeaseDuration) * time.Millisecond).UTC()
 	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339)
 	currentCheckpoint, err := checkpointer.getItem(shard.ID)
 	if err != nil {

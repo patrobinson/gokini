@@ -86,7 +86,7 @@ func TestCheckpointGainLock(t *testing.T) {
 		RecordConsumer:       rc,
 		TableName:            "checkpoint_gain_lock",
 		EmptyRecordBackoffMs: 2000,
-		LeaseDuration:        1,
+		LeaseDuration:        100,
 	}
 	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"), true)
 
@@ -103,7 +103,7 @@ func TestCheckpointGainLock(t *testing.T) {
 		ShardIteratorType: "TRIM_HORIZON",
 		RecordConsumer:    rc,
 		TableName:         "checkpoint_gain_lock",
-		LeaseDuration:     1,
+		LeaseDuration:     100,
 	}
 
 	err = kc.StartConsumer()
