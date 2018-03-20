@@ -129,6 +129,7 @@ func TestStartConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
 	}
+	time.Sleep(200 * time.Millisecond)
 	kc.Shutdown()
 	if consumer.ShardID != "00000001" {
 		t.Errorf("Expected shardId to be set to 00000001, but got: %s", consumer.ShardID)

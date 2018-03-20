@@ -58,6 +58,7 @@ type KinesisConsumer struct {
 	svc                  kinesisiface.KinesisAPI
 	checkpointer         Checkpointer
 	stop                 *chan struct{}
+	waitGroup            *sync.WaitGroup
 	shardStatus          map[string]*shardStatus
 	consumerID           string
 	sigs                 *chan os.Signal
@@ -114,6 +115,9 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
 
+	wg := sync.WaitGroup{}
+	kc.waitGroup = &wg
+
 	err = kc.getShardIDs("")
 	if err != nil {
 		log.Errorf("Error getting Kinesis shards: %s", err)
@@ -161,6 +165,7 @@ func (kc *KinesisConsumer) eventLoop() {
 			kc.RecordConsumer.Init(shard.ID)
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
 			go kc.getRecords(shard.ID)
+			kc.waitGroup.Add(1)
 		}
 		select {
 		case sig := <-*kc.sigs:
@@ -178,7 +183,7 @@ func (kc *KinesisConsumer) eventLoop() {
 // Shutdown stops consuming records gracefully
 func (kc *KinesisConsumer) Shutdown() {
 	close(*kc.stop)
-	time.Sleep(1 * time.Second)
+	kc.waitGroup.Wait()
 }
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
@@ -252,6 +257,8 @@ func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error)
 }
 
 func (kc *KinesisConsumer) getRecords(shardID string) {
+	defer kc.waitGroup.Done()
+
 	shard := kc.shardStatus[shardID]
 	shardIterator, err := kc.getShardIterator(shard)
 	if err != nil {
