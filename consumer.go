@@ -54,21 +54,30 @@ type KinesisConsumer struct {
 	TableName            string
 	EmptyRecordBackoffMs int
 	LeaseDuration        int
+	Monitoring           MonitoringConfiguration
 	svc                  kinesisiface.KinesisAPI
 	checkpointer         Checkpointer
 	stop                 *chan struct{}
 	shardStatus          map[string]*shardStatus
 	consumerID           string
 	sigs                 *chan os.Signal
+	mService             monitoringService
 }
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
-	log.SetLevel(log.DebugLevel)
 	// Set Defaults
 	if kc.EmptyRecordBackoffMs == 0 {
 		kc.EmptyRecordBackoffMs = defaultEmptyRecordBackoffMs
 	}
+
+	kc.consumerID = uuid.New().String()
+
+	err := kc.Monitoring.init(kc.StreamName, kc.consumerID)
+	if err != nil {
+		log.Errorf("Failed to start monitoring service: %s", err)
+	}
+	kc.mService = kc.Monitoring.service
 
 	if kc.svc == nil && kc.checkpointer == nil {
 		log.Debugf("Creating Kinesis Session")
@@ -105,8 +114,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
 
-	kc.consumerID = uuid.New().String()
-	err := kc.getShardIDs("")
+	err = kc.getShardIDs("")
 	if err != nil {
 		log.Errorf("Error getting Kinesis shards: %s", err)
 		return err
@@ -147,6 +155,8 @@ func (kc *KinesisConsumer) eventLoop() {
 				}
 				log.Fatal(err)
 			}
+
+			kc.mService.leaseGained(shard.ID)
 
 			kc.RecordConsumer.Init(shard.ID)
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
@@ -251,6 +261,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 	var retriedErrors int
 
 	for {
+		getRecordsStartTime := time.Now()
 		if time.Now().UTC().After(shard.LeaseTimeout.Add(-5 * time.Second)) {
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
@@ -258,6 +269,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 					shard.mux.Lock()
 					defer shard.mux.Unlock()
 					shard.AssignedTo = ""
+					kc.mService.leaseLost(shard.ID)
 					return
 				}
 				log.Fatal(err)
@@ -282,6 +294,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		retriedErrors = 0
 
 		var records []*Records
+		var recordBytes int64
 		for _, r := range getResp.Records {
 			record := &Records{
 				Data:           r.Data,
@@ -289,9 +302,14 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 				SequenceNumber: *r.SequenceNumber,
 			}
 			records = append(records, record)
+			recordBytes += int64(len(record.Data))
 			log.Debugf("Processing record %s", *r.SequenceNumber)
 		}
+		processRecordsStartTime := time.Now()
 		kc.RecordConsumer.ProcessRecords(records, kc)
+		// Convert from nanoseconds to milliseconds
+		processedRecordsTiming := time.Since(processRecordsStartTime) / 1000000
+		kc.mService.recordProcessRecordsTime(shard.ID, float64(processedRecordsTiming))
 
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
@@ -302,6 +320,14 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			shard.mux.Unlock()
 			kc.checkpointer.CheckpointSequence(shard)
 		}
+
+		kc.mService.incrRecordsProcessed(shard.ID, len(records))
+		kc.mService.incrBytesProcessed(shard.ID, recordBytes)
+		kc.mService.millisBehindLatest(shard.ID, *getResp.MillisBehindLatest)
+
+		// Convert from nanoseconds to milliseconds
+		getRecordsTime := time.Since(getRecordsStartTime) / 1000000
+		kc.mService.recordGetRecordsTime(shard.ID, float64(getRecordsTime))
 
 		// The shard has been closed, so no new records can be read from it
 		if getResp.NextShardIterator == nil {
@@ -315,7 +341,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		case <-*kc.stop:
 			kc.RecordConsumer.Shutdown()
 			return
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(1 * time.Nanosecond):
 		}
 	}
 }

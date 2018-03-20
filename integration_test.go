@@ -4,8 +4,12 @@ package gokini
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/prometheus/common/expfmt"
+	log "github.com/sirupsen/logrus"
 )
 
 type IntegrationRecordConsumer struct {
@@ -115,4 +119,64 @@ func TestCheckpointGainLock(t *testing.T) {
 		}
 	}
 	kc.Shutdown()
+}
+
+func TestPrometheusMonitoring(t *testing.T) {
+	log.SetLevel(log.DebugLevel)
+
+	rc := &IntegrationRecordConsumer{
+		processedRecords: make(map[string]int),
+	}
+	kc := &KinesisConsumer{
+		StreamName:           "prometheus_monitoring",
+		ShardIteratorType:    "TRIM_HORIZON",
+		RecordConsumer:       rc,
+		TableName:            "prometheus_monitoring",
+		EmptyRecordBackoffMs: 2000,
+		LeaseDuration:        1,
+		Monitoring: MonitoringConfiguration{
+			MonitoringService: "prometheus",
+			Prometheus: Prometheus{
+				ListenAddress: ":8080",
+			},
+		},
+	}
+	pushRecordToKinesis("prometheus_monitoring", []byte("abcd"))
+
+	err := kc.StartConsumer()
+	if err != nil {
+		t.Errorf("Error starting consumer %s", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	res, err := http.Get("http://localhost:8080/metrics")
+	if err != nil {
+		t.Fatalf("Error scraping Prometheus endpoint %s", err)
+	}
+	kc.Shutdown()
+
+	var parser expfmt.TextParser
+	parsed, err := parser.TextToMetricFamilies(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Errorf("Error reading monitoring response %s", err)
+	}
+
+	// # HELP gokini_processed_bytes Number of bytes processed
+	//# TYPE gokini_processed_bytes counter
+	//gokini_processed_bytes{kinesisStream="KINESIS_STREAM",shard="shardId-000000000000"} 9
+	//# HELP gokini_processed_records Number of records processed
+	//# TYPE gokini_processed_records counter
+	//gokini_processed_records{kinesisStream="KINESIS_STREAM",shard="shardId-000000000000"} 3
+	if *parsed["gokini_processed_bytes"].Metric[0].Counter.Value != float64(4) {
+		t.Errorf("Expected to have read 4 bytes, got %d", int(*parsed["gokini_processed_bytes"].Metric[0].Counter.Value))
+	}
+
+	if *parsed["gokini_processed_records"].Metric[0].Counter.Value != float64(1) {
+		t.Errorf("Expected to have read 1 records, got %d", int(*parsed["gokini_processed_records"].Metric[0].Counter.Value))
+	}
+
+	if *parsed["gokini_leases_held"].Metric[0].Counter.Value != float64(1) {
+		t.Errorf("Expected to have 1 lease held, got %d", int(*parsed["gokini_leases_held"].Metric[0].Counter.Value))
+	}
 }
