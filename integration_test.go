@@ -51,8 +51,8 @@ func TestCheckpointRecovery(t *testing.T) {
 		t.Errorf("Error starting consumer %s", err)
 	}
 
-	kc.Shutdown()
 	time.Sleep(200 * time.Millisecond)
+	kc.Shutdown()
 
 	kc = &KinesisConsumer{
 		StreamName:        "checkpoint_recovery",
@@ -95,8 +95,8 @@ func TestCheckpointGainLock(t *testing.T) {
 		t.Errorf("Error starting consumer %s", err)
 	}
 
-	kc.Shutdown()
 	time.Sleep(200 * time.Millisecond)
+	kc.Shutdown()
 
 	kc = &KinesisConsumer{
 		StreamName:        "checkpoint_gain_lock",
