@@ -147,7 +147,7 @@ func TestPrometheusMonitoring(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error starting consumer %s", err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	res, err := http.Get("http://localhost:8080/metrics")
 	if err != nil {
