@@ -162,12 +162,6 @@ func TestPrometheusMonitoring(t *testing.T) {
 		t.Errorf("Error reading monitoring response %s", err)
 	}
 
-	// # HELP gokini_processed_bytes Number of bytes processed
-	//# TYPE gokini_processed_bytes counter
-	//gokini_processed_bytes{kinesisStream="KINESIS_STREAM",shard="shardId-000000000000"} 9
-	//# HELP gokini_processed_records Number of records processed
-	//# TYPE gokini_processed_records counter
-	//gokini_processed_records{kinesisStream="KINESIS_STREAM",shard="shardId-000000000000"} 3
 	if *parsed["gokini_processed_bytes"].Metric[0].Counter.Value != float64(4) {
 		t.Errorf("Expected to have read 4 bytes, got %d", int(*parsed["gokini_processed_bytes"].Metric[0].Counter.Value))
 	}
@@ -176,7 +170,7 @@ func TestPrometheusMonitoring(t *testing.T) {
 		t.Errorf("Expected to have read 1 records, got %d", int(*parsed["gokini_processed_records"].Metric[0].Counter.Value))
 	}
 
-	if *parsed["gokini_leases_held"].Metric[0].Counter.Value != float64(1) {
+	if *parsed["gokini_leases_held"].Metric[0].Gauge.Value != float64(1) {
 		t.Errorf("Expected to have 1 lease held, got %d", int(*parsed["gokini_leases_held"].Metric[0].Counter.Value))
 	}
 }
