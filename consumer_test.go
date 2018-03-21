@@ -129,6 +129,7 @@ func TestStartConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
 	}
+	time.Sleep(200 * time.Millisecond)
 	kc.Shutdown()
 	if consumer.ShardID != "00000001" {
 		t.Errorf("Expected shardId to be set to 00000001, but got: %s", consumer.ShardID)
@@ -140,7 +141,7 @@ func TestStartConsumer(t *testing.T) {
 		t.Errorf("Expected record to be \"Hello World\", got %s", consumer.Records[1].Data)
 	}
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 	if consumer.IsShutdown != true {
 		t.Errorf("Expected consumer to be shutdown but it was not")
 	}
@@ -164,7 +165,7 @@ func TestStartConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 	kc.Shutdown()
 	if len(consumer.Records) != 2 {
 		t.Errorf("Expected there to be two records from Kinesis, got %s", consumer.Records)

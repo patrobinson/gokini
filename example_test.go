@@ -35,7 +35,9 @@ func ExampleRecordConsumer() {
 		TableName:            "gokini",
 		EmptyRecordBackoffMs: 1000,
 	}
-	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"))
+
+	// Send records to our kinesis stream so we have something to process
+	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"), true)
 
 	err := kc.StartConsumer()
 	if err != nil {
@@ -43,7 +45,7 @@ func ExampleRecordConsumer() {
 	}
 
 	// Wait for it to do it's thing
-	time.Sleep(1 * time.Second)
+	time.Sleep(200 * time.Millisecond)
 	kc.Shutdown()
 
 	// Output:

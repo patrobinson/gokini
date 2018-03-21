@@ -10,7 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func pushRecordToKinesis(streamName string, record []byte) error {
+func pushRecordToKinesis(streamName string, record []byte, createStream bool) error {
 	session, err := session.NewSessionWithOptions(
 		session.Options{
 			SharedConfigState: session.SharedConfigEnable,
@@ -25,14 +25,16 @@ func pushRecordToKinesis(streamName string, record []byte) error {
 		return err
 	}
 	svc := kinesis.New(session)
-	_, err = svc.CreateStream(&kinesis.CreateStreamInput{
-		ShardCount: aws.Int64(1),
-		StreamName: aws.String(streamName),
-	})
-	if err != nil {
-		log.Errorf("Error creating kinesis stream %s", err)
+	if createStream {
+		_, err = svc.CreateStream(&kinesis.CreateStreamInput{
+			ShardCount: aws.Int64(1),
+			StreamName: aws.String(streamName),
+		})
+		if err != nil {
+			log.Errorf("Error creating kinesis stream %s", err)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	time.Sleep(500 * time.Millisecond)
 	_, err = svc.PutRecord(&kinesis.PutRecordInput{
 		Data:         record,
 		PartitionKey: aws.String("abc123"),
