@@ -314,6 +314,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		}
 		processRecordsStartTime := time.Now()
 		kc.RecordConsumer.ProcessRecords(records, kc)
+
 		// Convert from nanoseconds to milliseconds
 		processedRecordsTiming := time.Since(processRecordsStartTime) / 1000000
 		kc.mService.recordProcessRecordsTime(shard.ID, float64(processedRecordsTiming))
@@ -321,11 +322,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
 		} else {
-			checkpoint := *getResp.Records[len(getResp.Records)-1].SequenceNumber
-			shard.mux.Lock()
-			shard.Checkpoint = checkpoint
-			shard.mux.Unlock()
-			kc.checkpointer.CheckpointSequence(shard)
+			kc.Checkpoint(shard, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
 		}
 
 		kc.mService.incrRecordsProcessed(shard.ID, len(records))
@@ -351,4 +348,11 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		case <-time.After(1 * time.Nanosecond):
 		}
 	}
+}
+
+func (kc *KinesisConsumer) Checkpoint(shard *shardStatus, sequenceNumber string) error {
+	shard.mux.Lock()
+	shard.Checkpoint = sequenceNumber
+	shard.mux.Unlock()
+	return kc.checkpointer.CheckpointSequence(shard)
 }
