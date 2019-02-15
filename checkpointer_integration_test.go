@@ -34,13 +34,16 @@ func TestRaceCondGetLeaseTimeout(t *testing.T) {
 		TableName: aws.String("TableName"),
 		Item:      marshalledCheckpoint,
 	}
-	checkpoint.svc.PutItem(input)
+	_, err := checkpoint.svc.PutItem(input)
+	if err != nil {
+		t.Fatalf("Error writing to dynamo %s", err)
+	}
 	shard := &shardStatus{
 		ID:         "0001",
-		Checkpoint: "",
+		Checkpoint: "TestRaceCondGetLeaseTimeout",
 		mux:        &sync.Mutex{},
 	}
-	err := checkpoint.GetLease(shard, "ijkl-mnop")
+	err = checkpoint.GetLease(shard, "ijkl-mnop")
 
 	if err == nil || err.Error() != ErrLeaseNotAquired {
 		t.Error("Got a lease when checkpoints didn't match. Potentially we stomped on the checkpoint")
@@ -63,13 +66,16 @@ func TestRaceCondGetLeaseNoAssignee(t *testing.T) {
 		TableName: aws.String("TableName"),
 		Item:      marshalledCheckpoint,
 	}
-	checkpoint.svc.PutItem(input)
+	_, err := checkpoint.svc.PutItem(input)
+	if err != nil {
+		t.Fatalf("Error writing to dynamo %s", err)
+	}
 	shard := &shardStatus{
 		ID:         "0001",
-		Checkpoint: "",
+		Checkpoint: "TestRaceCondGetLeaseNoAssignee",
 		mux:        &sync.Mutex{},
 	}
-	err := checkpoint.GetLease(shard, "ijkl-mnop")
+	err = checkpoint.GetLease(shard, "ijkl-mnop")
 
 	if err == nil || err.Error() != ErrLeaseNotAquired {
 		t.Error("Got a lease when checkpoints didn't match. Potentially we stomped on the checkpoint")

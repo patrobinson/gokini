@@ -56,7 +56,8 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 	}
 
 	if endpoint := os.Getenv("DYNAMODB_ENDPOINT"); endpoint != "" {
-		session.Config.Endpoint = aws.String(endpoint)
+		log.Infof("Using dynamodb endpoint from environment %s", endpoint)
+		session.Config.Endpoint = &endpoint
 	}
 
 	checkpointer.svc = dynamodb.New(session)
@@ -85,7 +86,16 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 	var conditionalExpression string
 	var expressionAttributeValues map[string]*dynamodb.AttributeValue
 	if !leaseTimeoutOk || !assignedToOk {
-		conditionalExpression = "attribute_not_exists(AssignedTo)"
+		if shard.Checkpoint == "" {
+			conditionalExpression = "attribute_not_exists(AssignedTo)"
+		} else {
+			conditionalExpression = "attribute_not_exists(AssignedTo) AND SequenceID = :id"
+			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
+				":id": {
+					S: &shard.Checkpoint,
+				},
+			}
+		}
 	} else {
 		assignedTo := *assignedVar.S
 		leaseTimeout := *leaseVar.S
@@ -98,17 +108,35 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 			return errors.New(ErrLeaseNotAquired)
 		}
 		log.Debugf("Attempting to get a lock for shard: %s, leaseTimeout: %s, assignedTo: %s", shard.ID, currentLeaseTimeout, assignedTo)
-		conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
-		expressionAttributeValues = map[string]*dynamodb.AttributeValue{
-			":id": {
-				S: &shard.ID,
-			},
-			":assigned_to": {
-				S: &assignedTo,
-			},
-			":lease_timeout": {
-				S: &leaseTimeout,
-			},
+		if shard.Checkpoint == "" {
+			conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
+			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
+				":id": {
+					S: &shard.ID,
+				},
+				":assigned_to": {
+					S: &assignedTo,
+				},
+				":lease_timeout": {
+					S: &leaseTimeout,
+				},
+			}
+		} else {
+			conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout AND SequenceID = :sid"
+			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
+				":id": {
+					S: &shard.ID,
+				},
+				":assigned_to": {
+					S: &assignedTo,
+				},
+				":lease_timeout": {
+					S: &leaseTimeout,
+				},
+				":sid": {
+					S: &shard.Checkpoint,
+				},
+			}
 		}
 	}
 
@@ -116,15 +144,16 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 		"ShardID": {
 			S: &shard.ID,
 		},
-		"SequenceID": {
-			S: &shard.Checkpoint,
-		},
 		"AssignedTo": {
 			S: &newAssignTo,
 		},
 		"LeaseTimeout": {
 			S: &newLeaseTimeoutString,
 		},
+	}
+
+	if shard.Checkpoint != "" {
+		marshalledCheckpoint["SequenceID"] = &dynamodb.AttributeValue{S: &shard.Checkpoint}
 	}
 
 	if shard.Checkpoint != "" {
