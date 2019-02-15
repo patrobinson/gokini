@@ -12,5 +12,5 @@ integration: get
 docker-integration:
 	@docker-compose up -d
 	@sleep 10
-	@go test -timeout 60s -tags=integration
+	@docker-compose run gokini make integration
 	@docker-compose down
