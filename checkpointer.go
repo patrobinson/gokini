@@ -114,6 +114,9 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 		"ShardID": {
 			S: &shard.ID,
 		},
+		"SequenceID": {
+			S: &shard.Checkpoint,
+		},
 		"AssignedTo": {
 			S: &newAssignTo,
 		},

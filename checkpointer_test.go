@@ -107,13 +107,20 @@ func TestGetLeaseAquired(t *testing.T) {
 	checkpoint.svc.PutItem(input)
 	shard := &shardStatus{
 		ID:         "0001",
-		Checkpoint: "",
+		Checkpoint: "deadbeef",
 		mux:        &sync.Mutex{},
 	}
 	err := checkpoint.GetLease(shard, "ijkl-mnop")
 
 	if err != nil {
 		t.Errorf("Lease not aquired after timeout %s", err)
+	}
+
+	id, ok := svc.item["SequenceID"]
+	if !ok {
+		t.Error("Expected SequenceID to be set by GetLease")
+	} else if *id.S != "deadbeef" {
+		t.Errorf("Expected SequenceID to be deadbeef. Got '%s'", *id.S)
 	}
 }
 
