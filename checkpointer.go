@@ -7,10 +7,10 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
-	"github.com/matryer/try"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -35,10 +35,11 @@ var ErrSequenceIDNotFound = errors.New("SequenceIDNotFoundForShard")
 
 // DynamoCheckpoint implements the Checkpoint interface using DynamoDB as a backend
 type DynamoCheckpoint struct {
-	TableName     string
-	LeaseDuration int
-	svc           dynamodbiface.DynamoDBAPI
-	Retries       int
+	TableName      string
+	LeaseDuration  int
+	Retries        int
+	svc            dynamodbiface.DynamoDBAPI
+	skipTableCheck bool
 }
 
 // Init initialises the DynamoDB Checkpoint
@@ -46,6 +47,7 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 	log.Debug("Creating DynamoDB session")
 	session, err := session.NewSessionWithOptions(
 		session.Options{
+			Config:            aws.Config{Retryer: client.DefaultRetryer{NumMaxRetries: checkpointer.Retries}},
 			SharedConfigState: session.SharedConfigEnable,
 		},
 	)
@@ -63,7 +65,7 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 		checkpointer.LeaseDuration = defaultLeaseDuration
 	}
 
-	if !checkpointer.doesTableExist() {
+	if !checkpointer.skipTableCheck && !checkpointer.doesTableExist() {
 		return checkpointer.createTable()
 	}
 	return nil
@@ -240,43 +242,18 @@ func (checkpointer *DynamoCheckpoint) conditionalUpdate(conditionExpression stri
 }
 
 func (checkpointer *DynamoCheckpoint) putItem(input *dynamodb.PutItemInput) error {
-	return try.Do(func(attempt int) (bool, error) {
-		_, err := checkpointer.svc.PutItem(input)
-		if awsErr, ok := err.(awserr.Error); ok {
-			if awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException ||
-				awsErr.Code() == dynamodb.ErrCodeInternalServerError &&
-					attempt < checkpointer.Retries {
-				// Backoff time as recommended by https://docs.aws.amazon.com/general/latest/gr/api-retries.html
-				time.Sleep(time.Duration(2^attempt*100) * time.Millisecond)
-				return true, err
-			}
-		}
-		return false, err
-	})
+	_, err := checkpointer.svc.PutItem(input)
+	return err
 }
 
 func (checkpointer *DynamoCheckpoint) getItem(shardID string) (map[string]*dynamodb.AttributeValue, error) {
-	var item *dynamodb.GetItemOutput
-	err := try.Do(func(attempt int) (bool, error) {
-		var err error
-		item, err = checkpointer.svc.GetItem(&dynamodb.GetItemInput{
-			TableName: aws.String(checkpointer.TableName),
-			Key: map[string]*dynamodb.AttributeValue{
-				"ShardID": {
-					S: aws.String(shardID),
-				},
+	item, err := checkpointer.svc.GetItem(&dynamodb.GetItemInput{
+		TableName: aws.String(checkpointer.TableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"ShardID": {
+				S: aws.String(shardID),
 			},
-		})
-		if awsErr, ok := err.(awserr.Error); ok {
-			if awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException ||
-				awsErr.Code() == dynamodb.ErrCodeInternalServerError &&
-					attempt < checkpointer.Retries {
-				// Backoff time as recommended by https://docs.aws.amazon.com/general/latest/gr/api-retries.html
-				time.Sleep(time.Duration(2^attempt*100) * time.Millisecond)
-				return true, err
-			}
-		}
-		return false, err
+		},
 	})
 	return item.Item, err
 }
