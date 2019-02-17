@@ -86,10 +86,9 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 	var conditionalExpression string
 	var expressionAttributeValues map[string]*dynamodb.AttributeValue
 	if !leaseTimeoutOk || !assignedToOk {
-		if shard.Checkpoint == "" {
-			conditionalExpression = "attribute_not_exists(AssignedTo)"
-		} else {
-			conditionalExpression = "attribute_not_exists(AssignedTo) AND SequenceID = :id"
+		conditionalExpression = "attribute_not_exists(AssignedTo)"
+		if shard.Checkpoint != "" {
+			conditionalExpression = conditionalExpression + " AND SequenceID = :id"
 			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
 				":id": {
 					S: &shard.Checkpoint,
@@ -108,34 +107,22 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 			return errors.New(ErrLeaseNotAquired)
 		}
 		log.Debugf("Attempting to get a lock for shard: %s, leaseTimeout: %s, assignedTo: %s", shard.ID, currentLeaseTimeout, assignedTo)
-		if shard.Checkpoint == "" {
-			conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
-			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
-				":id": {
-					S: &shard.ID,
-				},
-				":assigned_to": {
-					S: &assignedTo,
-				},
-				":lease_timeout": {
-					S: &leaseTimeout,
-				},
-			}
-		} else {
-			conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout AND SequenceID = :sid"
-			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
-				":id": {
-					S: &shard.ID,
-				},
-				":assigned_to": {
-					S: &assignedTo,
-				},
-				":lease_timeout": {
-					S: &leaseTimeout,
-				},
-				":sid": {
-					S: &shard.Checkpoint,
-				},
+		conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
+		expressionAttributeValues = map[string]*dynamodb.AttributeValue{
+			":id": {
+				S: &shard.ID,
+			},
+			":assigned_to": {
+				S: &assignedTo,
+			},
+			":lease_timeout": {
+				S: &leaseTimeout,
+			},
+		}
+		if shard.Checkpoint != "" {
+			conditionalExpression = conditionalExpression + " AND SequenceID = :sid"
+			expressionAttributeValues[":sid"] = &dynamodb.AttributeValue{
+				S: &shard.Checkpoint,
 			}
 		}
 	}
