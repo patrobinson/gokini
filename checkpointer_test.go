@@ -55,8 +55,8 @@ func TestDoesTableExist(t *testing.T) {
 func TestGetLeaseNotAquired(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
-		TableName: "TableName",
-		svc:       svc,
+		TableName:      "TableName",
+		skipTableCheck: true,
 	}
 	checkpoint.Init()
 	checkpoint.svc = svc
@@ -82,8 +82,10 @@ func TestGetLeaseNotAquired(t *testing.T) {
 func TestGetLeaseAquired(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
-		TableName: "TableName",
+		TableName:      "TableName",
+		skipTableCheck: true,
 	}
+	checkpoint.svc = svc
 	checkpoint.Init()
 	checkpoint.svc = svc
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
@@ -96,28 +98,39 @@ func TestGetLeaseAquired(t *testing.T) {
 		"LeaseTimeout": {
 			S: aws.String(time.Now().AddDate(0, -1, 0).UTC().Format(time.RFC3339)),
 		},
+		"SequenceID": {
+			S: aws.String("deadbeef"),
+		},
 	}
 	input := &dynamodb.PutItemInput{
 		TableName: aws.String("TableName"),
 		Item:      marshalledCheckpoint,
 	}
 	checkpoint.svc.PutItem(input)
-	err := checkpoint.GetLease(&shardStatus{
+	shard := &shardStatus{
 		ID:         "0001",
-		Checkpoint: "",
+		Checkpoint: "deadbeef",
 		mux:        &sync.Mutex{},
-	}, "ijkl-mnop")
+	}
+	err := checkpoint.GetLease(shard, "ijkl-mnop")
 
 	if err != nil {
 		t.Errorf("Lease not aquired after timeout %s", err)
+	}
+
+	id, ok := svc.item["SequenceID"]
+	if !ok {
+		t.Error("Expected SequenceID to be set by GetLease")
+	} else if *id.S != "deadbeef" {
+		t.Errorf("Expected SequenceID to be deadbeef. Got '%s'", *id.S)
 	}
 }
 
 func TestGetLeaseRenewed(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
-		TableName: "TableName",
-		svc:       svc,
+		TableName:      "TableName",
+		skipTableCheck: true,
 	}
 	checkpoint.Init()
 	checkpoint.svc = svc

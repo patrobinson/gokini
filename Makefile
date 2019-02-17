@@ -10,9 +10,7 @@ integration: get
 	@go test -timeout 30s -tags=integration
 
 docker-integration:
-	 @docker-compose run --rm gokini make integration
-
-travis-integration:
 	@docker-compose up -d
 	@sleep 10
-	@go test -timeout 30s -tags=integration
+	@docker-compose run gokini make integration
+	@docker-compose down
