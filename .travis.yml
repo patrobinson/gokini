@@ -11,4 +11,4 @@ before_install:
   - docker pull deangiberson/aws-dynamodb-local
   - docker pull dlsniper/kinesalite
 install: make get
-script: make travis-integration
+script: make docker-integration

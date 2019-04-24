@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
@@ -55,6 +56,7 @@ type KinesisConsumer struct {
 	EmptyRecordBackoffMs int
 	LeaseDuration        int
 	Monitoring           MonitoringConfiguration
+	Retries              *int
 	svc                  kinesisiface.KinesisAPI
 	checkpointer         Checkpointer
 	stop                 *chan struct{}
@@ -64,6 +66,8 @@ type KinesisConsumer struct {
 	sigs                 *chan os.Signal
 	mService             monitoringService
 }
+
+var defaultRetries = 5
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
@@ -81,9 +85,15 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	kc.mService = kc.Monitoring.service
 
 	if kc.svc == nil && kc.checkpointer == nil {
+		retries := defaultRetries
+		if kc.Retries != nil {
+			retries = *kc.Retries
+		}
+
 		log.Debugf("Creating Kinesis Session")
 		session, err := session.NewSessionWithOptions(
 			session.Options{
+				Config:            aws.Config{Retryer: client.DefaultRetryer{NumMaxRetries: retries}},
 				SharedConfigState: session.SharedConfigEnable,
 			},
 		)
@@ -96,7 +106,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		kc.svc = kinesis.New(session)
 		kc.checkpointer = &DynamoCheckpoint{
 			TableName:     kc.TableName,
-			Retries:       5,
+			Retries:       retries,
 			LeaseDuration: kc.LeaseDuration,
 		}
 	}
