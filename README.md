@@ -32,7 +32,7 @@ Beta - Ready to be used in non-critical Production environments.
 
 Unit tests can be run with:
 ```
-go test consumer_test.go consumer.go checkpointer_test.go checkpointer.go
+go test consumer_test.go consumer.go checkpointer_test.go checkpointer.go monitoring.go monitoring_test.go
 ```
 
 Integration tests can be run in docker with:

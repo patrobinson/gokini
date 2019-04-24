@@ -125,26 +125,3 @@ func TestGetLeaseAquired(t *testing.T) {
 		t.Errorf("Expected SequenceID to be deadbeef. Got '%s'", *id.S)
 	}
 }
-
-func TestGetLeaseRenewed(t *testing.T) {
-	checkpoint := &DynamoCheckpoint{
-		TableName:      "TableName",
-		skipTableCheck: true,
-	}
-	checkpoint.Init()
-	err := checkpoint.GetLease(&shardStatus{
-		ID:         "0001",
-		Checkpoint: "",
-	}, "abcd-efgh")
-	if err != nil {
-		t.Errorf("Error getting lease %s", err)
-	}
-
-	err = checkpoint.GetLease(&shardStatus{
-		ID:         "0001",
-		Checkpoint: "",
-	}, "abcd-efgh")
-	if err != nil {
-		t.Errorf("Error renewing lease %s", err)
-	}
-}

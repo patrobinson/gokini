@@ -78,3 +78,27 @@ func TestRaceCondGetLeaseNoAssignee(t *testing.T) {
 		t.Error("Got a lease when checkpoints didn't match. Potentially we stomped on the checkpoint")
 	}
 }
+
+
+func TestGetLeaseRenewed(t *testing.T) {
+	checkpoint := &DynamoCheckpoint{
+		TableName:      "TableName",
+		skipTableCheck: true,
+	}
+	checkpoint.Init()
+	err := checkpoint.GetLease(&shardStatus{
+		ID:         "0001",
+		Checkpoint: "",
+	}, "abcd-efgh")
+	if err != nil {
+		t.Errorf("Error getting lease %s", err)
+	}
+
+	err = checkpoint.GetLease(&shardStatus{
+		ID:         "0001",
+		Checkpoint: "",
+	}, "abcd-efgh")
+	if err != nil {
+		t.Errorf("Error renewing lease %s", err)
+	}
+}
