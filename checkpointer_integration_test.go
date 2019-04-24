@@ -3,7 +3,6 @@
 package gokini
 
 import (
-	"sync"
 	"testing"
 	"time"
 
@@ -41,7 +40,6 @@ func TestRaceCondGetLeaseTimeout(t *testing.T) {
 	shard := &shardStatus{
 		ID:         "0001",
 		Checkpoint: "TestRaceCondGetLeaseTimeout",
-		mux:        &sync.Mutex{},
 	}
 	err = checkpoint.GetLease(shard, "ijkl-mnop")
 
@@ -73,7 +71,6 @@ func TestRaceCondGetLeaseNoAssignee(t *testing.T) {
 	shard := &shardStatus{
 		ID:         "0001",
 		Checkpoint: "TestRaceCondGetLeaseNoAssignee",
-		mux:        &sync.Mutex{},
 	}
 	err = checkpoint.GetLease(shard, "ijkl-mnop")
 

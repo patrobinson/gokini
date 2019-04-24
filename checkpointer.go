@@ -161,10 +161,10 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 		return err
 	}
 
-	shard.mux.Lock()
+	shard.Lock()
 	shard.AssignedTo = newAssignTo
 	shard.LeaseTimeout = newLeaseTimeout
-	shard.mux.Unlock()
+	shard.Unlock()
 
 	return nil
 }
@@ -201,8 +201,8 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *shardStatus) error 
 		return ErrSequenceIDNotFound
 	}
 	log.Debugf("Retrieved Shard Iterator %s", *sequenceID.S)
-	shard.mux.Lock()
-	defer shard.mux.Unlock()
+	shard.Lock()
+	defer shard.Unlock()
 	shard.Checkpoint = *sequenceID.S
 
 	if assignedTo, ok := checkpoint["Assignedto"]; ok {

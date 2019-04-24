@@ -71,10 +71,10 @@ func (c *mockCheckpointer) Init() error {
 }
 
 func (c *mockCheckpointer) GetLease(shard *shardStatus, assignTo string) error {
-	shard.mux.Lock()
+	shard.Lock()
 	shard.AssignedTo = assignTo
 	shard.LeaseTimeout = time.Now()
-	shard.mux.Unlock()
+	shard.Unlock()
 	return nil
 }
 

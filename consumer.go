@@ -43,8 +43,8 @@ type shardStatus struct {
 	ID           string
 	Checkpoint   string
 	AssignedTo   string
-	mux          *sync.Mutex
 	LeaseTimeout time.Time
+	sync.Mutex
 }
 
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
@@ -61,11 +61,11 @@ type KinesisConsumer struct {
 	svc                         kinesisiface.KinesisAPI
 	checkpointer                Checkpointer
 	stop                        *chan struct{}
-	waitGroup                   *sync.WaitGroup
 	shardStatus                 map[string]*shardStatus
 	consumerID                  string
 	sigs                        *chan os.Signal
 	mService                    monitoringService
+	sync.WaitGroup
 }
 
 var defaultRetries = 5
@@ -126,9 +126,6 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
 
-	wg := sync.WaitGroup{}
-	kc.waitGroup = &wg
-
 	err = kc.getShardIDs("")
 	if err != nil {
 		log.Errorf("Error getting Kinesis shards: %s", err)
@@ -176,7 +173,7 @@ func (kc *KinesisConsumer) eventLoop() {
 			kc.RecordConsumer.Init(shard.ID)
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
 			go kc.getRecords(shard.ID)
-			kc.waitGroup.Add(1)
+			kc.Add(1)
 		}
 		select {
 		case sig := <-*kc.sigs:
@@ -194,7 +191,7 @@ func (kc *KinesisConsumer) eventLoop() {
 // Shutdown stops consuming records gracefully
 func (kc *KinesisConsumer) Shutdown() {
 	close(*kc.stop)
-	kc.waitGroup.Wait()
+	kc.Wait()
 }
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
@@ -218,8 +215,7 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 		if _, ok := kc.shardStatus[*s.ShardId]; !ok {
 			log.Debugf("Found shard with id %s", *s.ShardId)
 			kc.shardStatus[*s.ShardId] = &shardStatus{
-				ID:  *s.ShardId,
-				mux: &sync.Mutex{},
+				ID: *s.ShardId,
 			}
 		}
 		lastShardID = *s.ShardId
@@ -268,7 +264,7 @@ func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error)
 }
 
 func (kc *KinesisConsumer) getRecords(shardID string) {
-	defer kc.waitGroup.Done()
+	defer kc.Done()
 
 	shard := kc.shardStatus[shardID]
 	shardIterator, err := kc.getShardIterator(shard)
@@ -284,8 +280,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
 				if err.Error() == ErrLeaseNotAquired {
-					shard.mux.Lock()
-					defer shard.mux.Unlock()
+					shard.Lock()
+					defer shard.Unlock()
 					shard.AssignedTo = ""
 					kc.mService.leaseLost(shard.ID)
 					return
@@ -364,8 +360,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 // Checkpoint records the sequence number for the given shard ID as being processed
 func (kc *KinesisConsumer) Checkpoint(shardID string, sequenceNumber string) error {
 	shard := kc.shardStatus[shardID]
-	shard.mux.Lock()
+	shard.Lock()
 	shard.Checkpoint = sequenceNumber
-	shard.mux.Unlock()
+	shard.Unlock()
 	return kc.checkpointer.CheckpointSequence(shard)
 }

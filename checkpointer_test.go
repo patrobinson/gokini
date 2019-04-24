@@ -2,7 +2,6 @@ package gokini
 
 import (
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -67,7 +66,6 @@ func TestGetLeaseNotAquired(t *testing.T) {
 	err := checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
-		mux:        &sync.Mutex{},
 	}, "abcd-efgh")
 	if err != nil {
 		t.Errorf("Error getting lease %s", err)
@@ -76,7 +74,6 @@ func TestGetLeaseNotAquired(t *testing.T) {
 	err = checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
-		mux:        &sync.Mutex{},
 	}, "ijkl-mnop")
 	if err == nil || err.Error() != ErrLeaseNotAquired {
 		t.Errorf("Got a lease when it was already held by abcd-efgh: %s", err)
@@ -114,7 +111,6 @@ func TestGetLeaseAquired(t *testing.T) {
 	shard := &shardStatus{
 		ID:         "0001",
 		Checkpoint: "deadbeef",
-		mux:        &sync.Mutex{},
 	}
 	err := checkpoint.GetLease(shard, "ijkl-mnop")
 
@@ -139,7 +135,6 @@ func TestGetLeaseRenewed(t *testing.T) {
 	err := checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
-		mux:        &sync.Mutex{},
 	}, "abcd-efgh")
 	if err != nil {
 		t.Errorf("Error getting lease %s", err)
@@ -148,7 +143,6 @@ func TestGetLeaseRenewed(t *testing.T) {
 	err = checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
-		mux:        &sync.Mutex{},
 	}, "abcd-efgh")
 	if err != nil {
 		t.Errorf("Error renewing lease %s", err)
