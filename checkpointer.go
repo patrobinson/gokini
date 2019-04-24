@@ -60,7 +60,9 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 		session.Config.Endpoint = &endpoint
 	}
 
-	checkpointer.svc = dynamodb.New(session)
+	if checkpointer.svc == nil {
+		checkpointer.svc = dynamodb.New(session)
+	}
 
 	if checkpointer.LeaseDuration == 0 {
 		checkpointer.LeaseDuration = defaultLeaseDuration

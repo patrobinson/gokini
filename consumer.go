@@ -49,22 +49,23 @@ type shardStatus struct {
 
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
 type KinesisConsumer struct {
-	StreamName           string
-	ShardIteratorType    string
-	RecordConsumer       RecordConsumer
-	TableName            string
-	EmptyRecordBackoffMs int
-	LeaseDuration        int
-	Monitoring           MonitoringConfiguration
-	Retries              *int
-	svc                  kinesisiface.KinesisAPI
-	checkpointer         Checkpointer
-	stop                 *chan struct{}
-	waitGroup            *sync.WaitGroup
-	shardStatus          map[string]*shardStatus
-	consumerID           string
-	sigs                 *chan os.Signal
-	mService             monitoringService
+	StreamName                  string
+	ShardIteratorType           string
+	RecordConsumer              RecordConsumer
+	TableName                   string
+	EmptyRecordBackoffMs        int
+	LeaseDuration               int
+	Monitoring                  MonitoringConfiguration
+	DisableAutomaticCheckpoints bool
+	Retries                     *int
+	svc                         kinesisiface.KinesisAPI
+	checkpointer                Checkpointer
+	stop                        *chan struct{}
+	waitGroup                   *sync.WaitGroup
+	shardStatus                 map[string]*shardStatus
+	consumerID                  string
+	sigs                        *chan os.Signal
+	mService                    monitoringService
 }
 
 var defaultRetries = 5
@@ -331,8 +332,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
-		} else {
-			kc.Checkpoint(shard, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
+		} else if !kc.DisableAutomaticCheckpoints {
+			kc.Checkpoint(shardID, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
 		}
 
 		kc.mService.incrRecordsProcessed(shard.ID, len(records))
@@ -360,7 +361,9 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 	}
 }
 
-func (kc *KinesisConsumer) Checkpoint(shard *shardStatus, sequenceNumber string) error {
+// Checkpoint records the sequence number for the given shard ID as being processed
+func (kc *KinesisConsumer) Checkpoint(shardID string, sequenceNumber string) error {
+	shard := kc.shardStatus[shardID]
 	shard.mux.Lock()
 	shard.Checkpoint = sequenceNumber
 	shard.mux.Unlock()

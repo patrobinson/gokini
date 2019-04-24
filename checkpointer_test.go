@@ -35,6 +35,10 @@ func (m *mockDynamoDB) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemO
 		Item: m.item,
 	}, nil
 }
+
+func (m *mockDynamoDB) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.CreateTableOutput, error) {
+	return &dynamodb.CreateTableOutput{}, nil
+}
 func TestDoesTableExist(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
@@ -127,13 +131,11 @@ func TestGetLeaseAquired(t *testing.T) {
 }
 
 func TestGetLeaseRenewed(t *testing.T) {
-	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
 		TableName:      "TableName",
 		skipTableCheck: true,
 	}
 	checkpoint.Init()
-	checkpoint.svc = svc
 	err := checkpoint.GetLease(&shardStatus{
 		ID:         "0001",
 		Checkpoint: "",
