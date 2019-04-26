@@ -156,16 +156,17 @@ func (kc *KinesisConsumer) eventLoop() {
 			err := kc.checkpointer.FetchCheckpoint(shard)
 			if err != nil {
 				if err != ErrSequenceIDNotFound {
-					log.Fatal(err)
+					log.Error(err)
+					continue
 				}
 			}
 
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
 				if err.Error() == ErrLeaseNotAquired {
-					continue
+					log.Error(err)
 				}
-				log.Fatal(err)
+				continue
 			}
 
 			kc.mService.leaseGained(shard.ID)
@@ -175,6 +176,7 @@ func (kc *KinesisConsumer) eventLoop() {
 			go kc.getRecords(shard.ID)
 			kc.Add(1)
 		}
+
 		select {
 		case sig := <-*kc.sigs:
 			log.Infof("Received signal %s. Exiting", sig)
@@ -201,6 +203,7 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 	if startShardID != "" {
 		args.ExclusiveStartShardId = aws.String(startShardID)
 	}
+
 	streamDesc, err := kc.svc.DescribeStream(args)
 	if err != nil {
 		return err

@@ -87,6 +87,7 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 	leaseVar, leaseTimeoutOk := currentCheckpoint["LeaseTimeout"]
 	var conditionalExpression string
 	var expressionAttributeValues map[string]*dynamodb.AttributeValue
+
 	if !leaseTimeoutOk || !assignedToOk {
 		conditionalExpression = "attribute_not_exists(AssignedTo)"
 		if shard.Checkpoint != "" {
@@ -143,9 +144,6 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 
 	if shard.Checkpoint != "" {
 		marshalledCheckpoint["SequenceID"] = &dynamodb.AttributeValue{S: &shard.Checkpoint}
-	}
-
-	if shard.Checkpoint != "" {
 		marshalledCheckpoint["Checkpoint"] = &dynamodb.AttributeValue{
 			S: &shard.Checkpoint,
 		}
