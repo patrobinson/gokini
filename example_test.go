@@ -38,6 +38,8 @@ func ExampleRecordConsumer() {
 
 	// Send records to our kinesis stream so we have something to process
 	pushRecordToKinesis("KINESIS_STREAM", []byte("foo"), true)
+	defer deleteStream("KINESIS_STREAM")
+	defer deleteTable("gokini")
 
 	err := kc.StartConsumer()
 	if err != nil {

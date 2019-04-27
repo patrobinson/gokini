@@ -39,6 +39,8 @@ func ExampleCheckpointRecordConsumer() {
 
 	// Send records to our kinesis stream so we have something to process
 	pushRecordToKinesis("KINESIS_STREAM_2", []byte("example_checkpoint_record_consumer"), true)
+	defer deleteStream("KINESIS_STREAM_2")
+	defer deleteTable("gokini_2")
 
 	err := kc.StartConsumer()
 	if err != nil {
@@ -48,6 +50,7 @@ func ExampleCheckpointRecordConsumer() {
 	// Wait for it to do it's thing
 	time.Sleep(200 * time.Millisecond)
 	kc.Shutdown()
+	time.Sleep(200 * time.Millisecond)
 
 	// Output:
 	// Checkpointer initializing

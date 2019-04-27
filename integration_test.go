@@ -45,6 +45,8 @@ func TestCheckpointRecovery(t *testing.T) {
 		LeaseDuration:        1,
 	}
 	pushRecordToKinesis("checkpoint_recovery", []byte("abcd"), true)
+	defer deleteStream("checkpoint_recovery")
+	defer deleteTable("checkpoint_recovery")
 
 	err := kc.StartConsumer()
 	if err != nil {
@@ -89,6 +91,8 @@ func TestCheckpointGainLock(t *testing.T) {
 		LeaseDuration:        100,
 	}
 	pushRecordToKinesis("checkpoint_gain_lock", []byte("abcd"), true)
+	defer deleteStream("checkpoint_gain_lock")
+	defer deleteTable("checkpoint_gain_lock")
 
 	err := kc.StartConsumer()
 	if err != nil {
@@ -142,6 +146,8 @@ func TestPrometheusMonitoring(t *testing.T) {
 		},
 	}
 	pushRecordToKinesis("prometheus_monitoring", []byte("abcd"), true)
+	defer deleteStream("prometheus_monitoring")
+	defer deleteTable("prometheus_monitoring")
 
 	err := kc.StartConsumer()
 	if err != nil {
