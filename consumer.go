@@ -40,10 +40,13 @@ type Records struct {
 }
 
 type shardStatus struct {
-	ID           string
-	Checkpoint   string
-	AssignedTo   string
-	LeaseTimeout time.Time
+	ID              string
+	Checkpoint      string
+	AssignedTo      string
+	LeaseTimeout    time.Time
+	ParentShardID   *string
+	Closed          bool
+	readyToBeClosed bool
 	sync.Mutex
 }
 
@@ -58,6 +61,7 @@ type KinesisConsumer struct {
 	Monitoring                  MonitoringConfiguration
 	DisableAutomaticCheckpoints bool
 	Retries                     *int
+	IgnoreShardOrdering         bool
 	svc                         kinesisiface.KinesisAPI
 	checkpointer                Checkpointer
 	stop                        *chan struct{}
@@ -163,7 +167,7 @@ func (kc *KinesisConsumer) eventLoop() {
 
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
-				if err.Error() == ErrLeaseNotAquired {
+				if err.Error() != ErrLeaseNotAquired {
 					log.Error(err)
 				}
 				continue
@@ -218,7 +222,8 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 		if _, ok := kc.shardStatus[*s.ShardId]; !ok {
 			log.Debugf("Found shard with id %s", *s.ShardId)
 			kc.shardStatus[*s.ShardId] = &shardStatus{
-				ID: *s.ShardId,
+				ID:            *s.ShardId,
+				ParentShardID: s.ParentShardId,
 			}
 		}
 		lastShardID = *s.ShardId
@@ -346,6 +351,13 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		// The shard has been closed, so no new records can be read from it
 		if getResp.NextShardIterator == nil {
 			log.Debugf("Shard %s closed", shardID)
+			shard := kc.shardStatus[shardID]
+			shard.Lock()
+			shard.readyToBeClosed = true
+			shard.Unlock()
+			if !kc.DisableAutomaticCheckpoints {
+				kc.Checkpoint(shardID, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
+			}
 			kc.RecordConsumer.Shutdown()
 			return
 		}
@@ -366,5 +378,35 @@ func (kc *KinesisConsumer) Checkpoint(shardID string, sequenceNumber string) err
 	shard.Lock()
 	shard.Checkpoint = sequenceNumber
 	shard.Unlock()
+	// If shard is closed and we've read all records from the shard, mark the shard as closed
+	if shard.readyToBeClosed {
+		var err error
+		shard.Closed, err = kc.shardIsEmpty(shard)
+		if err != nil {
+			return err
+		}
+	}
 	return kc.checkpointer.CheckpointSequence(shard)
+}
+
+func (kc *KinesisConsumer) shardIsEmpty(shard *shardStatus) (empty bool, err error) {
+	iterResp, err := kc.svc.GetShardIterator(&kinesis.GetShardIteratorInput{
+		ShardId:                &shard.ID,
+		ShardIteratorType:      aws.String("AFTER_SEQUENCE_NUMBER"),
+		StartingSequenceNumber: &shard.Checkpoint,
+		StreamName:             &kc.StreamName,
+	})
+	if err != nil {
+		return
+	}
+	recordsResp, err := kc.svc.GetRecords(&kinesis.GetRecordsInput{
+		ShardIterator: iterResp.ShardIterator,
+	})
+	if err != nil {
+		return
+	}
+	if len(recordsResp.Records) == 0 {
+		empty = true
+	}
+	return
 }

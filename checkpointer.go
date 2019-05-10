@@ -140,13 +140,17 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 		"LeaseTimeout": {
 			S: &newLeaseTimeoutString,
 		},
+		"Closed": {
+			BOOL: &shard.Closed,
+		},
+	}
+
+	if shard.ParentShardID != nil {
+		marshalledCheckpoint["ParentShardID"] = &dynamodb.AttributeValue{S: shard.ParentShardID}
 	}
 
 	if shard.Checkpoint != "" {
 		marshalledCheckpoint["SequenceID"] = &dynamodb.AttributeValue{S: &shard.Checkpoint}
-		marshalledCheckpoint["Checkpoint"] = &dynamodb.AttributeValue{
-			S: &shard.Checkpoint,
-		}
 	}
 
 	err = checkpointer.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)
@@ -183,6 +187,12 @@ func (checkpointer *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) err
 		"LeaseTimeout": {
 			S: &leaseTimeout,
 		},
+		"Closed": {
+			BOOL: &shard.Closed,
+		},
+	}
+	if shard.ParentShardID != nil {
+		marshalledCheckpoint["ParentShardID"] = &dynamodb.AttributeValue{S: shard.ParentShardID}
 	}
 	return checkpointer.saveItem(marshalledCheckpoint)
 }
@@ -205,6 +215,10 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *shardStatus) error 
 
 	if assignedTo, ok := checkpoint["Assignedto"]; ok {
 		shard.AssignedTo = *assignedTo.S
+	}
+
+	if parent, ok := checkpoint["ParentShardID"]; ok && parent.S != nil {
+		shard.ParentShardID = aws.String(*parent.S)
 	}
 	return nil
 }
