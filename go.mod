@@ -1,7 +1,7 @@
 module github.com/patrobinson/gokini
 
 require (
-	github.com/aws/aws-sdk-go v1.15.78
+	github.com/aws/aws-sdk-go v1.19.38
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/cheekybits/is v0.0.0-20150225183255-68e9c0620927 // indirect
 	github.com/gogo/protobuf v1.1.1 // indirect

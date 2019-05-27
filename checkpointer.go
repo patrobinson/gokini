@@ -35,11 +35,14 @@ var ErrSequenceIDNotFound = errors.New("SequenceIDNotFoundForShard")
 
 // DynamoCheckpoint implements the Checkpoint interface using DynamoDB as a backend
 type DynamoCheckpoint struct {
-	TableName      string
-	LeaseDuration  int
-	Retries        int
-	svc            dynamodbiface.DynamoDBAPI
-	skipTableCheck bool
+	TableName          string
+	LeaseDuration      int
+	Retries            int
+	ReadCapacityUnits  *int64
+	WriteCapacityUnits *int64
+	BillingMode        *string
+	svc                dynamodbiface.DynamoDBAPI
+	skipTableCheck     bool
 }
 
 // Init initialises the DynamoDB Checkpoint
@@ -66,6 +69,10 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 
 	if checkpointer.LeaseDuration == 0 {
 		checkpointer.LeaseDuration = defaultLeaseDuration
+	}
+
+	if checkpointer.BillingMode == nil {
+		checkpointer.BillingMode = aws.String("PAY_PER_REQUEST")
 	}
 
 	if !checkpointer.skipTableCheck && !checkpointer.doesTableExist() {
@@ -217,17 +224,20 @@ func (checkpointer *DynamoCheckpoint) createTable() error {
 				AttributeType: aws.String("S"),
 			},
 		},
+		BillingMode: checkpointer.BillingMode,
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
 				AttributeName: aws.String("ShardID"),
 				KeyType:       aws.String("HASH"),
 			},
 		},
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-			ReadCapacityUnits:  aws.Int64(1),
-			WriteCapacityUnits: aws.Int64(1),
-		},
 		TableName: aws.String(checkpointer.TableName),
+	}
+	if *checkpointer.BillingMode == "PROVISIONED" {
+		input.ProvisionedThroughput = &dynamodb.ProvisionedThroughput{
+			ReadCapacityUnits:  checkpointer.ReadCapacityUnits,
+			WriteCapacityUnits: checkpointer.WriteCapacityUnits,
+		}
 	}
 	_, err := checkpointer.svc.CreateTable(input)
 	return err
