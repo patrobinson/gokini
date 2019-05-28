@@ -211,14 +211,16 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *shardStatus) error 
 		return err
 	}
 
-	sequenceID, ok := checkpoint["SequenceID"]
-	if !ok {
-		return ErrSequenceIDNotFound
+	var sequenceID string
+	if s, ok := checkpoint["SequenceID"]; ok {
+		// Why do we thrown an error here???
+		//return ErrSequenceIDNotFound
+		sequenceID = *s.S
 	}
-	log.Debugf("Retrieved Shard Iterator %s", *sequenceID.S)
+	log.Debugf("Retrieved Shard Iterator %s", sequenceID)
 	shard.Lock()
 	defer shard.Unlock()
-	shard.Checkpoint = *sequenceID.S
+	shard.Checkpoint = sequenceID
 
 	if assignedTo, ok := checkpoint["Assignedto"]; ok {
 		shard.AssignedTo = *assignedTo.S
