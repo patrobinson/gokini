@@ -3,6 +3,7 @@ package gokini
 import (
 	"os"
 	"time"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
 	awsclient "github.com/aws/aws-sdk-go/aws/client"
@@ -13,7 +14,33 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func pushRecordToKinesis(streamName string, record []byte, createStream bool) error {
+func createStream(streamName string, shards int64) error {
+	session, err := session.NewSessionWithOptions(
+		session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+			Config: aws.Config{
+				CredentialsChainVerboseErrors: aws.Bool(true),
+				Endpoint:                      aws.String(os.Getenv("KINESIS_ENDPOINT")),
+				Retryer:                       awsclient.DefaultRetryer{NumMaxRetries: 1},
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("Error starting kinesis client %s", err)
+	}
+	svc := kinesis.New(session)
+	_, err = svc.CreateStream(&kinesis.CreateStreamInput{
+		ShardCount: aws.Int64(shards),
+		StreamName: aws.String(streamName),
+	})
+	if err != nil {
+		return err
+	}
+	time.Sleep(500 * time.Millisecond)
+	return nil
+}
+
+func pushRecordToKinesis(streamName string, record []byte, create bool) error {
 	session, err := session.NewSessionWithOptions(
 		session.Options{
 			SharedConfigState: session.SharedConfigEnable,
@@ -29,15 +56,10 @@ func pushRecordToKinesis(streamName string, record []byte, createStream bool) er
 		return err
 	}
 	svc := kinesis.New(session)
-	if createStream {
-		_, err = svc.CreateStream(&kinesis.CreateStreamInput{
-			ShardCount: aws.Int64(1),
-			StreamName: aws.String(streamName),
-		})
-		if err != nil {
-			log.Errorf("Error creating kinesis stream %s", err)
+	if create {
+		if err := createStream(streamName, 1); err != nil {
+			return err
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
 	_, err = svc.PutRecord(&kinesis.PutRecordInput{
 		Data:         record,

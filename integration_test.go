@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/prometheus/common/expfmt"
-	log "github.com/sirupsen/logrus"
 )
 
 type IntegrationRecordConsumer struct {
@@ -43,6 +44,7 @@ func TestCheckpointRecovery(t *testing.T) {
 		TableName:            "checkpoint_recovery",
 		EmptyRecordBackoffMs: 2000,
 		LeaseDuration:        1,
+		eventLoopSleepMs:     1,
 	}
 	pushRecordToKinesis("checkpoint_recovery", []byte("abcd"), true)
 	defer deleteStream("checkpoint_recovery")
@@ -126,8 +128,6 @@ func TestCheckpointGainLock(t *testing.T) {
 }
 
 func TestPrometheusMonitoring(t *testing.T) {
-	log.SetLevel(log.DebugLevel)
-
 	rc := &IntegrationRecordConsumer{
 		processedRecords: make(map[string]int),
 	}
@@ -179,4 +179,51 @@ func TestPrometheusMonitoring(t *testing.T) {
 	if *parsed["gokini_leases_held"].Metric[0].Gauge.Value != float64(1) {
 		t.Errorf("Expected to have 1 lease held, got %d", int(*parsed["gokini_leases_held"].Metric[0].Counter.Value))
 	}
+}
+
+func setupConsumer(name string, t *testing.T) *KinesisConsumer {
+	rc := &IntegrationRecordConsumer{
+		processedRecords: make(map[string]int),
+	}
+	kc := &KinesisConsumer{
+		StreamName:           name,
+		ShardIteratorType:    "TRIM_HORIZON",
+		RecordConsumer:       rc,
+		TableName:            name,
+		EmptyRecordBackoffMs: 50,
+		LeaseDuration:        400,
+		eventLoopSleepMs:     100,
+	}
+	err := kc.StartConsumer()
+	if err != nil {
+		t.Fatalf("Error starting consumer %s", err)
+	}
+	return kc
+}
+
+func TestRebalance(t *testing.T) {
+	uuid, _ := uuid.NewUUID()
+	name := uuid.String()
+	err := createStream(name, 2)
+	if err != nil {
+		t.Fatalf("Error creating stream %s", err)
+	}
+	kc := setupConsumer(name, t)
+	time.Sleep(600 * time.Millisecond)
+	secondKc := setupConsumer(name, t)
+	defer deleteStream(name)
+	defer deleteTable(name)
+	time.Sleep(2000 * time.Millisecond)
+	workers, err := kc.checkpointer.ListActiveWorkers()
+	if err != nil {
+		t.Fatalf("Error getting workers %s", err)
+	}
+	if len(workers[kc.consumerID]) != 1 {
+		t.Errorf("Expected consumer to have 1 shard, it has %d", len(workers[kc.consumerID]))
+	}
+	if len(workers[secondKc.consumerID]) != 1 {
+		t.Errorf("Expected consumer to have 1 shard, it has %d", len(workers[secondKc.consumerID]))
+	}
+	kc.Shutdown()
+	secondKc.Shutdown()
 }

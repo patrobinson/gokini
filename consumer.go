@@ -2,6 +2,8 @@ package gokini
 
 import (
 	"errors"
+	"math"
+	"math/rand"
 	"os"
 	"os/signal"
 	"sync"
@@ -48,6 +50,7 @@ type shardStatus struct {
 	LeaseTimeout    time.Time
 	ParentShardID   *string
 	Closed          bool
+	ClaimRequest    *string
 	readyToBeClosed bool
 	sync.Mutex
 }
@@ -76,6 +79,7 @@ type KinesisConsumer struct {
 	consumerID                  string
 	sigs                        *chan os.Signal
 	mService                    monitoringService
+	shardStealInProgress        bool
 	sync.WaitGroup
 }
 
@@ -83,6 +87,8 @@ var defaultRetries = 5
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
+	rand.Seed(time.Now().UnixNano())
+
 	// Set Defaults
 	if kc.EmptyRecordBackoffMs == 0 {
 		kc.EmptyRecordBackoffMs = defaultEmptyRecordBackoffMs
@@ -110,7 +116,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 			retries = *kc.Retries
 		}
 
-		log.Debugf("Creating Kinesis Session")
+		log.Debugln("Creating Kinesis Session", kc.consumerID)
 		session, err := session.NewSessionWithOptions(
 			session.Options{
 				Config:            aws.Config{Retryer: client.DefaultRetryer{NumMaxRetries: retries}},
@@ -183,12 +189,28 @@ func (kc *KinesisConsumer) eventLoop() {
 				}
 			}
 
+			var stealShard bool
+			if shard.ClaimRequest != nil {
+				if shard.LeaseTimeout.Before(time.Now().Add(time.Second * time.Duration(kc.secondsBackoffClaim))) {
+					if *shard.ClaimRequest != kc.consumerID {
+						log.Debugln("Shard being stolen", shard.ID)
+						continue
+					} else {
+						stealShard = true
+						log.Debugln("Stealing shard", shard.ID)
+					}
+				}
+			}
+
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
 				if err.Error() != ErrLeaseNotAquired {
 					log.Error(err)
 				}
 				continue
+			}
+			if stealShard {
+				kc.shardStealInProgress = false
 			}
 
 			kc.mService.leaseGained(shard.ID)
@@ -197,6 +219,11 @@ func (kc *KinesisConsumer) eventLoop() {
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
 			go kc.getRecords(shard.ID)
 			kc.Add(1)
+		}
+
+		err = kc.rebalance()
+		if err != nil {
+			log.Warn(err)
 		}
 
 		select {
@@ -302,6 +329,17 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 
 	for {
 		getRecordsStartTime := time.Now()
+		err := kc.checkpointer.FetchCheckpoint(shard)
+		if err != nil && err != ErrSequenceIDNotFound {
+			log.Errorln("Error fetching checkpoint", err)
+			time.Sleep(time.Duration(defaultEventLoopSleepMs) * time.Second)
+			continue
+		}
+		if shard.ClaimRequest != nil {
+			// Claim request means another worker wants to steal our shard. So let the lease lapse
+			log.Infof("Shard %s has been stolen from us", shardID)
+			return
+		}
 		if time.Now().UTC().After(shard.LeaseTimeout.Add(-5 * time.Second)) {
 			err = kc.checkpointer.GetLease(shard, kc.consumerID)
 			if err != nil {
@@ -332,7 +370,9 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 					continue
 				}
 			}
-			log.Fatalf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs)
+			log.Errorf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs)
+			// Forces the shard to become abandon
+			break
 		}
 		retriedErrors = 0
 
@@ -430,4 +470,60 @@ func (kc *KinesisConsumer) shardIsEmpty(shard *shardStatus) (empty bool, err err
 		empty = true
 	}
 	return
+}
+
+func (kc *KinesisConsumer) rebalance() error {
+	// Only attempt to steal one shard at at time, to allow for linear convergence
+	if kc.shardStealInProgress {
+		log.Debugln("Steal in progress", kc.consumerID)
+		return nil
+	}
+	workers, err := kc.checkpointer.ListActiveWorkers()
+	if err != nil {
+		log.Debugln("Error listing workings", kc.consumerID, err)
+		return err
+	}
+
+	var numShards float64
+	for _, shards := range workers {
+		numShards += float64(len(shards))
+	}
+	numWorkers := float64(len(workers))
+	// 1:1 shards to workers is optimal, so we cannot possibly rebalance
+	if numWorkers >= numShards {
+		log.Debugln("Optimal shard allocation, not stealing any shards", numWorkers, ">", numShards, kc.consumerID)
+		return nil
+	}
+	optimalShards := math.Floor(numWorkers / numShards)
+	// We have more than or equal optimal shards, so no rebalancing can take place
+	if shards, ok := workers[kc.consumerID]; ok && float64(len(shards)) >= optimalShards {
+		log.Debugln("We have enough shards, not attempting to steal any", kc.consumerID)
+		return nil
+	}
+	maxShards := int(optimalShards)
+	var workerSteal *string
+	for w, shards := range workers {
+		if len(shards) > maxShards {
+			workerSteal = &w
+			maxShards = len(shards)
+		}
+	}
+	// Not all shards are allocated so fallback to default shard allocation mechanisms
+	if workerSteal == nil {
+		log.Debugln("Not all shards are allocated, not stealing any", kc.consumerID)
+		return nil
+	}
+
+	// Steal a random shard from the worker with the most shards
+	kc.shardStealInProgress = true
+	randIndex := rand.Perm(len(workers[*workerSteal]))[0]
+	shardToSteal := workers[*workerSteal][randIndex]
+	log.Debugln("Stealing shard", shardToSteal, "from", *workerSteal)
+	err = kc.checkpointer.ClaimShard(&shardStatus{
+		ID: shardToSteal,
+	}, kc.consumerID)
+	if err != nil {
+		kc.shardStealInProgress = false
+	}
+	return err
 }

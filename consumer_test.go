@@ -96,6 +96,14 @@ func (c *mockCheckpointer) FetchCheckpoint(shard *shardStatus) error {
 	return nil
 }
 
+func (c *mockCheckpointer) ListActiveWorkers() (map[string][]string, error) {
+	return nil, nil
+}
+
+func (c *mockCheckpointer) ClaimShard(*shardStatus, string) error {
+	return nil
+}
+
 func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.GetRecordsOutput, error) {
 	k.numberRecordsSent++
 	var nextShardIterator *string
