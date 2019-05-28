@@ -84,7 +84,7 @@ func (checkpointer *DynamoCheckpoint) Init() error {
 // GetLease attempts to gain a lock on the given shard
 func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) error {
 	newLeaseTimeout := time.Now().Add(time.Duration(checkpointer.LeaseDuration) * time.Millisecond).UTC()
-	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339)
+	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339Nano)
 	currentCheckpoint, err := checkpointer.getItem(shard.ID)
 	if err != nil {
 		return err
@@ -109,7 +109,7 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 		assignedTo := *assignedVar.S
 		leaseTimeout := *leaseVar.S
 
-		currentLeaseTimeout, err := time.Parse(time.RFC3339, leaseTimeout)
+		currentLeaseTimeout, err := time.Parse(time.RFC3339Nano, leaseTimeout)
 		if err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo s
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID
 func (checkpointer *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) error {
-	leaseTimeout := shard.LeaseTimeout.UTC().Format(time.RFC3339)
+	leaseTimeout := shard.LeaseTimeout.UTC().Format(time.RFC3339Nano)
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
 		"ShardID": {
 			S: &shard.ID,

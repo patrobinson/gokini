@@ -20,6 +20,8 @@ import (
 
 const (
 	defaultEmptyRecordBackoffMs = 500
+	defaultSecondsBackoffClaim  = 30
+	defaultEventLoopSleepMs     = 1000
 	// ErrCodeKMSThrottlingException is defined in the API Reference https://docs.aws.amazon.com/sdk-for-go/api/service/kinesis/#Kinesis.GetRecords
 	// But it's not a constant?
 	ErrCodeKMSThrottlingException = "KMSThrottlingException"
@@ -65,6 +67,8 @@ type KinesisConsumer struct {
 	DynamoReadCapacityUnits     *int64
 	DynamoWriteCapacityUnits    *int64
 	DynamoBillingMode           *string
+	secondsBackoffClaim         int
+	eventLoopSleepMs            int
 	svc                         kinesisiface.KinesisAPI
 	checkpointer                Checkpointer
 	stop                        *chan struct{}
@@ -91,6 +95,14 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		log.Errorf("Failed to start monitoring service: %s", err)
 	}
 	kc.mService = kc.Monitoring.service
+
+	if kc.secondsBackoffClaim == 0 {
+		kc.secondsBackoffClaim = defaultSecondsBackoffClaim
+	}
+
+	if kc.eventLoopSleepMs == 0 {
+		kc.eventLoopSleepMs = defaultEventLoopSleepMs
+	}
 
 	if kc.svc == nil && kc.checkpointer == nil {
 		retries := defaultRetries
@@ -195,7 +207,7 @@ func (kc *KinesisConsumer) eventLoop() {
 		case <-*kc.stop:
 			log.Info("Shutting down")
 			return
-		case <-time.After(1 * time.Second):
+		case <-time.After(time.Duration(kc.eventLoopSleepMs) * time.Millisecond):
 		}
 	}
 }
@@ -298,9 +310,12 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 					defer shard.Unlock()
 					shard.AssignedTo = ""
 					kc.mService.leaseLost(shard.ID)
+					log.Debugln("Lease lost for shard", shard.ID, kc.consumerID)
 					return
 				}
-				log.Fatal(err)
+				log.Warnln("Error renewing lease", err)
+				time.Sleep(time.Duration(1) * time.Second)
+				continue
 			}
 		}
 
