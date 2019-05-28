@@ -217,8 +217,8 @@ func (kc *KinesisConsumer) eventLoop() {
 
 			kc.RecordConsumer.Init(shard.ID)
 			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
-			go kc.getRecords(shard.ID)
 			kc.Add(1)
+			go kc.getRecords(shard.ID)
 		}
 
 		err = kc.rebalance()
