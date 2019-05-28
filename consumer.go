@@ -55,13 +55,16 @@ type KinesisConsumer struct {
 	StreamName                  string
 	ShardIteratorType           string
 	RecordConsumer              RecordConsumer
-	TableName                   string
 	EmptyRecordBackoffMs        int
 	LeaseDuration               int
 	Monitoring                  MonitoringConfiguration
 	DisableAutomaticCheckpoints bool
 	Retries                     *int
 	IgnoreShardOrdering         bool
+	TableName                   string
+	DynamoReadCapacityUnits     *int64
+	DynamoWriteCapacityUnits    *int64
+	DynamoBillingMode           *string
 	svc                         kinesisiface.KinesisAPI
 	checkpointer                Checkpointer
 	stop                        *chan struct{}
@@ -110,9 +113,12 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		}
 		kc.svc = kinesis.New(session)
 		kc.checkpointer = &DynamoCheckpoint{
-			TableName:     kc.TableName,
-			Retries:       retries,
-			LeaseDuration: kc.LeaseDuration,
+			ReadCapacityUnits:  kc.DynamoReadCapacityUnits,
+			WriteCapacityUnits: kc.DynamoWriteCapacityUnits,
+			BillingMode:        kc.DynamoBillingMode,
+			TableName:          kc.TableName,
+			Retries:            retries,
+			LeaseDuration:      kc.LeaseDuration,
 		}
 	}
 
