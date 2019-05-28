@@ -5,9 +5,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	awsclient "github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/kinesis"
+
 	log "github.com/sirupsen/logrus"
 )
 
@@ -18,6 +20,7 @@ func pushRecordToKinesis(streamName string, record []byte, createStream bool) er
 			Config: aws.Config{
 				CredentialsChainVerboseErrors: aws.Bool(true),
 				Endpoint:                      aws.String(os.Getenv("KINESIS_ENDPOINT")),
+				Retryer:                       awsclient.DefaultRetryer{NumMaxRetries: 1},
 			},
 		},
 	)
