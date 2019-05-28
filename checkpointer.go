@@ -222,7 +222,7 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *shardStatus) error 
 	defer shard.Unlock()
 	shard.Checkpoint = sequenceID
 
-	if assignedTo, ok := checkpoint["Assignedto"]; ok {
+	if assignedTo, ok := checkpoint["AssignedTo"]; ok {
 		shard.AssignedTo = *assignedTo.S
 	}
 
