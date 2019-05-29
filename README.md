@@ -18,15 +18,21 @@ This project aims to provide feature parity with the [Kinesis Client Library](ht
 
 - [x] Checkpoints processed records
 
-- [ ] Balances shard-worker associations when the worker instance count changes
+- [x] Balances shard-worker associations when the worker instance count changes
 
-- [ ] Balances shard-worker associations when shards are split or merged
+- [x] Balances shard-worker associations when shards are split or merged
 
 - [x] Instrumentation that supports CloudWatch (partial support)
+
+- [ ] Support enhanced fan-out consumers
+
+- [ ] Support aggregated records from Kinesis Producer library
 
 ## Development Status
 
 Beta - Ready to be used in non-critical Production environments.
+
+Actively used (via a fork) by [VMWare](https://github.com/vmware/vmware-go-kcl)
 
 ## Testing
 
