@@ -35,7 +35,7 @@ type monitoringService interface {
 	recordProcessRecordsTime(string, float64)
 }
 
-func (m *MonitoringConfiguration) init(streamName string, workerID string) error {
+func (m *MonitoringConfiguration) init(streamName string, workerID string, sess *session.Session) error {
 	if m.MonitoringService == "" {
 		m.service = &noopMonitoringService{}
 		return nil
@@ -47,6 +47,7 @@ func (m *MonitoringConfiguration) init(streamName string, workerID string) error
 		m.Prometheus.WorkerID = workerID
 		m.service = &m.Prometheus
 	case "cloudwatch":
+		m.CloudWatch.Session = sess
 		m.CloudWatch.KinesisStream = streamName
 		m.CloudWatch.WorkerID = workerID
 		m.service = &m.CloudWatch
@@ -186,6 +187,7 @@ type cloudWatchMonitoringService struct {
 	// What granularity we should send metrics to CW at. Note setting this to 1 will cost quite a bit of money
 	// At the time of writing (March 2018) about US$200 per month
 	ResolutionSec int
+	Session       *session.Session
 	svc           cloudwatchiface.CloudWatchAPI
 	shardMetrics  map[string]*cloudWatchMetrics
 }
@@ -206,16 +208,7 @@ func (cw *cloudWatchMonitoringService) init() error {
 		cw.ResolutionSec = 60
 	}
 
-	session, err := session.NewSessionWithOptions(
-		session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	cw.svc = cloudwatch.New(session)
+	cw.svc = cloudwatch.New(cw.Session)
 	cw.shardMetrics = make(map[string]*cloudWatchMetrics)
 	return nil
 }

@@ -3,6 +3,7 @@ package gokini
 import (
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/aws/aws-sdk-go/service/cloudwatch/cloudwatchiface"
 )
@@ -24,6 +25,7 @@ func TestCloudWatchMonitoring(t *testing.T) {
 		KinesisStream: "cloudwatch_monitoring",
 		WorkerID:      "abc123",
 		ResolutionSec: 1,
+		Session:       session.New(),
 		svc:           mockCW,
 		shardMetrics:  map[string]*cloudWatchMetrics{},
 	}

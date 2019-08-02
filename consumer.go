@@ -70,7 +70,7 @@ type KinesisConsumer struct {
 	DynamoReadCapacityUnits     *int64
 	DynamoWriteCapacityUnits    *int64
 	DynamoBillingMode           *string
-	Session						*session.Session // Setting session means Retries is ignored
+	Session                     *session.Session // Setting session means Retries is ignored
 	secondsBackoffClaim         int
 	eventLoopSleepMs            int
 	svc                         kinesisiface.KinesisAPI
@@ -97,7 +97,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 
 	kc.consumerID = uuid.New().String()
 
-	err := kc.Monitoring.init(kc.StreamName, kc.consumerID)
+	err := kc.Monitoring.init(kc.StreamName, kc.consumerID, kc.Session)
 	if err != nil {
 		log.Errorf("Failed to start monitoring service: %s", err)
 	}
@@ -141,6 +141,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 			TableName:          kc.TableName,
 			Retries:            retries,
 			LeaseDuration:      kc.LeaseDuration,
+			Session:            kc.Session,
 		}
 	}
 

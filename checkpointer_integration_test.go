@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 func TestRaceCondGetLeaseTimeout(t *testing.T) {
 	checkpoint := &DynamoCheckpoint{
 		TableName: "TableName",
+		Session:   session.New(),
 	}
 	checkpoint.Init()
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
@@ -50,6 +52,7 @@ func TestRaceCondGetLeaseTimeout(t *testing.T) {
 func TestRaceCondGetLeaseNoAssignee(t *testing.T) {
 	checkpoint := &DynamoCheckpoint{
 		TableName: "TableName",
+		Session:   session.New(),
 	}
 	checkpoint.Init()
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
@@ -79,11 +82,11 @@ func TestRaceCondGetLeaseNoAssignee(t *testing.T) {
 	}
 }
 
-
 func TestGetLeaseRenewed(t *testing.T) {
 	checkpoint := &DynamoCheckpoint{
 		TableName:      "TableName",
 		skipTableCheck: true,
+		Session:        session.New(),
 	}
 	checkpoint.Init()
 	err := checkpoint.GetLease(&shardStatus{

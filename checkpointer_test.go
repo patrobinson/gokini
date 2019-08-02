@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 )
@@ -42,6 +43,7 @@ func TestDoesTableExist(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
 		TableName: "TableName",
+		Session:   session.New(),
 		svc:       svc,
 	}
 	if !checkpoint.doesTableExist() {
@@ -59,6 +61,7 @@ func TestGetLeaseNotAquired(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
 		TableName:      "TableName",
+		Session:        session.New(),
 		skipTableCheck: true,
 	}
 	checkpoint.Init()
@@ -84,6 +87,7 @@ func TestGetLeaseAquired(t *testing.T) {
 	svc := &mockDynamoDB{tableExist: true}
 	checkpoint := &DynamoCheckpoint{
 		TableName:      "TableName",
+		Session:        session.New(),
 		skipTableCheck: true,
 	}
 	checkpoint.svc = svc
