@@ -70,6 +70,7 @@ type KinesisConsumer struct {
 	DynamoReadCapacityUnits     *int64
 	DynamoWriteCapacityUnits    *int64
 	DynamoBillingMode           *string
+	Session						*session.Session // Setting session means Retries is ignored
 	secondsBackoffClaim         int
 	eventLoopSleepMs            int
 	svc                         kinesisiface.KinesisAPI
@@ -110,14 +111,14 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		kc.eventLoopSleepMs = defaultEventLoopSleepMs
 	}
 
-	if kc.svc == nil && kc.checkpointer == nil {
-		retries := defaultRetries
-		if kc.Retries != nil {
-			retries = *kc.Retries
-		}
+	retries := defaultRetries
+	if kc.Retries != nil {
+		retries = *kc.Retries
+	}
 
-		log.Debugln("Creating Kinesis Session", kc.consumerID)
-		session, err := session.NewSessionWithOptions(
+	if kc.Session == nil {
+		log.Debugln("Creating AWS Session", kc.consumerID)
+		kc.Session, err = session.NewSessionWithOptions(
 			session.Options{
 				Config:            aws.Config{Retryer: client.DefaultRetryer{NumMaxRetries: retries}},
 				SharedConfigState: session.SharedConfigEnable,
@@ -126,10 +127,13 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if kc.svc == nil && kc.checkpointer == nil {
 		if endpoint := os.Getenv("KINESIS_ENDPOINT"); endpoint != "" {
-			session.Config.Endpoint = aws.String(endpoint)
+			kc.Session.Config.Endpoint = aws.String(endpoint)
 		}
-		kc.svc = kinesis.New(session)
+		kc.svc = kinesis.New(kc.Session)
 		kc.checkpointer = &DynamoCheckpoint{
 			ReadCapacityUnits:  kc.DynamoReadCapacityUnits,
 			WriteCapacityUnits: kc.DynamoWriteCapacityUnits,
