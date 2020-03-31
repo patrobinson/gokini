@@ -391,7 +391,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			}
 			records = append(records, record)
 			recordBytes += int64(len(record.Data))
-			log.Debugf("Processing record %s", *r.SequenceNumber)
+			log.Tracef("Processing record %s", *r.SequenceNumber)
 		}
 		processRecordsStartTime := time.Now()
 		kc.RecordConsumer.ProcessRecords(records, kc)

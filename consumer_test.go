@@ -1,13 +1,16 @@
 package gokini
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
+	log "github.com/sirupsen/logrus"
 )
 
 type testConsumer struct {
@@ -36,6 +39,7 @@ type mockKinesisClient struct {
 	numberRecordsSent          int
 	getShardIteratorCalled     bool
 	RecordData                 []byte
+	numShards                  int
 }
 
 func (k *mockKinesisClient) GetShardIterator(args *kinesis.GetShardIteratorInput) (*kinesis.GetShardIteratorOutput, error) {
@@ -46,14 +50,16 @@ func (k *mockKinesisClient) GetShardIterator(args *kinesis.GetShardIteratorInput
 }
 
 func (k *mockKinesisClient) DescribeStream(args *kinesis.DescribeStreamInput) (*kinesis.DescribeStreamOutput, error) {
+	shards := []*kinesis.Shard{}
+	for i := 0; i < k.numShards; i++ {
+		shards = append(shards, &kinesis.Shard{
+			ShardId: aws.String(fmt.Sprintf("0000000%d", i)),
+		})
+	}
 	return &kinesis.DescribeStreamOutput{
 		StreamDescription: &kinesis.StreamDescription{
-			StreamStatus: aws.String("ACTIVE"),
-			Shards: []*kinesis.Shard{
-				&kinesis.Shard{
-					ShardId: aws.String("00000001"),
-				},
-			},
+			StreamStatus:  aws.String("ACTIVE"),
+			Shards:        shards,
 			HasMoreShards: aws.Bool(false),
 		},
 	}, nil
@@ -63,6 +69,7 @@ type mockCheckpointer struct {
 	checkpointFound    bool
 	checkpoint         map[string]*shardStatus
 	checkpointerCalled bool
+	sync.Mutex
 }
 
 func (c *mockCheckpointer) Init() error {
@@ -79,6 +86,8 @@ func (c *mockCheckpointer) GetLease(shard *shardStatus, assignTo string) error {
 }
 
 func (c *mockCheckpointer) CheckpointSequence(shard *shardStatus) error {
+	c.Lock()
+	defer c.Unlock()
 	c.checkpoint[shard.ID] = shard
 	c.checkpointerCalled = true
 	return nil
@@ -123,11 +132,12 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 	}, nil
 }
 
-func createConsumer(t *testing.T, numRecords int, checkpointFound bool) (consumer *testConsumer, kinesisSvc *mockKinesisClient, checkpointer *mockCheckpointer) {
+func createConsumer(t *testing.T, numRecords int, checkpointFound bool, shutdown bool) (consumer *testConsumer, kinesisSvc *mockKinesisClient, checkpointer *mockCheckpointer) {
 	consumer = &testConsumer{}
 	kinesisSvc = &mockKinesisClient{
 		NumberRecordsBeforeClosing: numRecords,
 		RecordData:                 []byte("Hello World"),
+		numShards:                  1,
 	}
 	checkpointer = &mockCheckpointer{
 		checkpointFound: checkpointFound,
@@ -138,6 +148,7 @@ func createConsumer(t *testing.T, numRecords int, checkpointFound bool) (consume
 		RecordConsumer:    consumer,
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
+		eventLoopSleepMs:  1,
 	}
 
 	err := kc.StartConsumer()
@@ -145,15 +156,17 @@ func createConsumer(t *testing.T, numRecords int, checkpointFound bool) (consume
 		t.Fatalf("Got unexpected error from StartConsumer: %s", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	kc.Shutdown()
+	if shutdown {
+		kc.Shutdown()
+	}
 	return
 }
 
 func TestStartConsumer(t *testing.T) {
-	consumer, kinesisSvc, _ := createConsumer(t, 1, false)
+	consumer, kinesisSvc, _ := createConsumer(t, 1, false, true)
 
-	if consumer.ShardID != "00000001" {
-		t.Errorf("Expected shardId to be set to 00000001, but got: %s", consumer.ShardID)
+	if consumer.ShardID != "00000000" {
+		t.Errorf("Expected shardId to be set to 00000000, but got: %s", consumer.ShardID)
 	}
 
 	if len(consumer.Records) != 1 {
@@ -162,12 +175,11 @@ func TestStartConsumer(t *testing.T) {
 		t.Errorf("Expected record to be \"Hello World\", got %s", consumer.Records[1].Data)
 	}
 
-	time.Sleep(200 * time.Millisecond)
-	if consumer.IsShutdown != true {
+	if !consumer.IsShutdown {
 		t.Errorf("Expected consumer to be shutdown but it was not")
 	}
 
-	consumer, kinesisSvc, _ = createConsumer(t, 2, true)
+	consumer, kinesisSvc, _ = createConsumer(t, 2, true, true)
 	if len(consumer.Records) != 2 {
 		t.Errorf("Expected there to be two records from Kinesis, got %v", consumer.Records)
 	}
@@ -176,13 +188,25 @@ func TestStartConsumer(t *testing.T) {
 		t.Errorf("Expected shard iterator to be called, but it was not")
 	}
 
-	if consumer.IsShutdown != true {
+	if !consumer.IsShutdown {
 		t.Errorf("Expected consumer to be shutdown but it was not")
 	}
 
-	consumer, kinesisSvc, _ = createConsumer(t, 1, true)
+	consumer, kinesisSvc, _ = createConsumer(t, 1, true, true)
 	if !kinesisSvc.getShardIteratorCalled {
 		t.Errorf("Expected shard iterator not to be called, but it was")
 	}
+}
 
+func TestScaleDownShards(t *testing.T) {
+	log.SetLevel(log.DebugLevel)
+	consumer, kinesisSvc, _ := createConsumer(t, 0, false, false)
+	kinesisSvc.numShards = 2
+	time.Sleep(10 * time.Millisecond)
+	// Shards don't just "dissapear" they rather just return a nil nextIteratorShard
+	kinesisSvc.NumberRecordsBeforeClosing = 1
+	time.Sleep(10 * time.Millisecond)
+	if consumer.IsShutdown {
+		t.Errorf("Expected consumer to not be shutdown but it was")
+	}
 }
