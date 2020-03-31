@@ -472,15 +472,27 @@ func (kc *KinesisConsumer) shardIsEmpty(shard *shardStatus) (empty bool, err err
 }
 
 func (kc *KinesisConsumer) rebalance() error {
-	// Only attempt to steal one shard at at time, to allow for linear convergence
-	if kc.shardStealInProgress {
-		log.Debugln("Steal in progress", kc.consumerID)
-		return nil
-	}
 	workers, err := kc.checkpointer.ListActiveWorkers()
 	if err != nil {
 		log.Debugln("Error listing workings", kc.consumerID, err)
 		return err
+	}
+
+	// Only attempt to steal one shard at at time, to allow for linear convergence
+	if kc.shardStealInProgress {
+		err := kc.getShardIDs("")
+		if err != nil {
+			return err
+		}
+		for _, shard := range kc.shardStatus {
+			if shard.ClaimRequest != nil && *shard.ClaimRequest == kc.consumerID {
+				log.Debugln("Steal in progress", kc.consumerID)
+				return nil
+			}
+			// Our shard steal was stomped on by a Checkpoint.
+			// We could deal with that, but instead just try again
+			kc.shardStealInProgress = false
+		}
 	}
 
 	var numShards float64
