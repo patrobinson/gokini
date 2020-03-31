@@ -186,13 +186,14 @@ func setupConsumer(name string, t *testing.T) *KinesisConsumer {
 		processedRecords: make(map[string]int),
 	}
 	kc := &KinesisConsumer{
-		StreamName:           name,
-		ShardIteratorType:    "TRIM_HORIZON",
-		RecordConsumer:       rc,
-		TableName:            name,
-		EmptyRecordBackoffMs: 50,
-		LeaseDuration:        400,
-		eventLoopSleepMs:     100,
+		StreamName:               name,
+		ShardIteratorType:        "TRIM_HORIZON",
+		RecordConsumer:           rc,
+		TableName:                name,
+		EmptyRecordBackoffMs:     50,
+		LeaseDuration:            200,
+		eventLoopSleepMs:         100,
+		millisecondsBackoffClaim: 200,
 	}
 	err := kc.StartConsumer()
 	if err != nil {
@@ -209,10 +210,11 @@ func TestRebalance(t *testing.T) {
 		t.Fatalf("Error creating stream %s", err)
 	}
 	kc := setupConsumer(name, t)
+	time.Sleep(200 * time.Millisecond)
 	secondKc := setupConsumer(name, t)
 	defer deleteStream(name)
 	defer deleteTable(name)
-	time.Sleep(2000 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 	workers, err := kc.checkpointer.ListActiveWorkers()
 	if err != nil {
 		t.Fatalf("Error getting workers %s", err)

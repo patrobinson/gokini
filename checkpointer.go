@@ -130,6 +130,14 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 				S: &shard.Checkpoint,
 			}
 		}
+		if shard.ClaimRequest == nil {
+			conditionalExpression = conditionalExpression + " AND attribute_not_exists(ClaimRequest)"
+		} else {
+			conditionalExpression = conditionalExpression + " AND ClaimRequest = :claim_request"
+			expressionAttributeValues[":claim_request"] = &dynamodb.AttributeValue{
+				S: shard.ClaimRequest,
+			}
+		}
 	}
 
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
@@ -177,6 +185,8 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 // CheckpointSequence writes a checkpoint at the designated sequence ID
 func (c *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) error {
 	leaseTimeout := shard.LeaseTimeout.UTC().Format(time.RFC3339Nano)
+	conditionalExpression := "attribute_not_exists(ClaimRequest)"
+	expressionAttributeValues := map[string]*dynamodb.AttributeValue{}
 	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
 		"ShardID": {
 			S: &shard.ID,
@@ -194,10 +204,19 @@ func (c *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) error {
 			BOOL: &shard.Closed,
 		},
 	}
+	if shard.ClaimRequest != nil {
+		marshalledCheckpoint["ClaimRequest"] = &dynamodb.AttributeValue{
+			S: shard.ClaimRequest,
+		}
+		conditionalExpression = "ClaimRequest = :claim_request"
+		expressionAttributeValues[":claim_request"] = &dynamodb.AttributeValue{
+			S: shard.ClaimRequest,
+		}
+	}
 	if shard.ParentShardID != nil {
 		marshalledCheckpoint["ParentShardID"] = &dynamodb.AttributeValue{S: shard.ParentShardID}
 	}
-	return c.saveItem(marshalledCheckpoint)
+	return c.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)
 }
 
 // FetchCheckpoint retrieves the checkpoint for the given shard

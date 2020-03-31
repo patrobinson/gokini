@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	defaultEmptyRecordBackoffMs = 500
-	defaultSecondsBackoffClaim  = 30
-	defaultEventLoopSleepMs     = 1000
+	defaultEmptyRecordBackoffMs     = 500
+	defaultMillisecondsBackoffClaim = 30000
+	defaultEventLoopSleepMs         = 1000
 	// ErrCodeKMSThrottlingException is defined in the API Reference https://docs.aws.amazon.com/sdk-for-go/api/service/kinesis/#Kinesis.GetRecords
 	// But it's not a constant?
 	ErrCodeKMSThrottlingException = "KMSThrottlingException"
@@ -71,7 +71,7 @@ type KinesisConsumer struct {
 	DynamoWriteCapacityUnits    *int64
 	DynamoBillingMode           *string
 	Session                     *session.Session // Setting session means Retries is ignored
-	secondsBackoffClaim         int
+	millisecondsBackoffClaim    int
 	eventLoopSleepMs            int
 	svc                         kinesisiface.KinesisAPI
 	checkpointer                Checkpointer
@@ -102,8 +102,8 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	}
 	kc.mService = kc.Monitoring.service
 
-	if kc.secondsBackoffClaim == 0 {
-		kc.secondsBackoffClaim = defaultSecondsBackoffClaim
+	if kc.millisecondsBackoffClaim == 0 {
+		kc.millisecondsBackoffClaim = defaultMillisecondsBackoffClaim
 	}
 
 	if kc.eventLoopSleepMs == 0 {
@@ -191,7 +191,7 @@ func (kc *KinesisConsumer) eventLoop() {
 
 			var stealShard bool
 			if shard.ClaimRequest != nil {
-				if shard.LeaseTimeout.Before(time.Now().Add(time.Second * time.Duration(kc.secondsBackoffClaim))) {
+				if shard.LeaseTimeout.Before(time.Now().Add(time.Millisecond * time.Duration(kc.millisecondsBackoffClaim))) {
 					if *shard.ClaimRequest != kc.consumerID {
 						log.Debugln("Shard being stolen", shard.ID)
 						continue
