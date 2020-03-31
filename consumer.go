@@ -1,7 +1,6 @@
 package gokini
 
 import (
-	"errors"
 	"math"
 	"math/rand"
 	"os"
@@ -9,6 +8,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -147,7 +148,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 
 	log.Debugf("Initializing Checkpointer")
 	if err := kc.checkpointer.Init(); err != nil {
-		log.Fatalf("Failed to start Checkpointer: %s", err)
+		return errors.Wrapf(err, "Failed to start Checkpointer")
 	}
 
 	kc.shardStatus = make(map[string]*shardStatus)
@@ -248,6 +249,7 @@ func (kc *KinesisConsumer) eventLoop() {
 func (kc *KinesisConsumer) Shutdown() {
 	close(*kc.stop)
 	kc.Wait()
+	kc.RecordConsumer.Shutdown()
 }
 
 func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
@@ -327,7 +329,9 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 	shard := kc.shardStatus[shardID]
 	shardIterator, err := kc.getShardIterator(shard)
 	if err != nil {
-		log.Fatalf("Unable to get shard iterator for %s: %s", shardID, err)
+		kc.RecordConsumer.Shutdown()
+		log.Errorf("Unable to get shard iterator for %s: %s", shardID, err)
+		return
 	}
 
 	var retriedErrors int
@@ -424,14 +428,13 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			if !kc.DisableAutomaticCheckpoints {
 				kc.Checkpoint(shardID, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
 			}
-			kc.RecordConsumer.Shutdown()
 			return
 		}
 		shardIterator = getResp.NextShardIterator
 
 		select {
 		case <-*kc.stop:
-			kc.RecordConsumer.Shutdown()
+			log.Infoln("Received stop signal, stopping record consumer for", shardID)
 			return
 		case <-time.After(1 * time.Nanosecond):
 		}

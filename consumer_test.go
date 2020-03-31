@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
-	log "github.com/sirupsen/logrus"
 )
 
 type testConsumer struct {
@@ -199,7 +198,6 @@ func TestStartConsumer(t *testing.T) {
 }
 
 func TestScaleDownShards(t *testing.T) {
-	log.SetLevel(log.DebugLevel)
 	consumer, kinesisSvc, _ := createConsumer(t, 0, false, false)
 	kinesisSvc.numShards = 2
 	time.Sleep(10 * time.Millisecond)
