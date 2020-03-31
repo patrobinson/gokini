@@ -4,9 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
@@ -80,7 +78,6 @@ type KinesisConsumer struct {
 	stop                        *chan struct{}
 	shardStatus                 map[string]*shardStatus
 	consumerID                  string
-	sigs                        *chan os.Signal
 	mService                    monitoringService
 	shardStealInProgress        bool
 	sync.WaitGroup
@@ -153,10 +150,6 @@ func (kc *KinesisConsumer) StartConsumer() error {
 	}
 
 	kc.shardStatus = make(map[string]*shardStatus)
-
-	sigs := make(chan os.Signal, 1)
-	kc.sigs = &sigs
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
@@ -234,10 +227,6 @@ func (kc *KinesisConsumer) eventLoop() {
 		}
 
 		select {
-		case sig := <-*kc.sigs:
-			log.Infof("Received signal %s. Exiting", sig)
-			kc.Shutdown()
-			return
 		case <-*kc.stop:
 			log.Info("Shutting down")
 			return
