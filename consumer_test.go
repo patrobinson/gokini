@@ -176,8 +176,8 @@ func TestStartConsumer(t *testing.T) {
 		t.Errorf("Expected record to be \"Hello World\", got %s", consumer.Records[0].Data)
 	}
 
-	if string(consumer.Records[0].ShardID) != "00000001" {
-		t.Errorf("Expected Shard ID to be \"00000001\", got %s", consumer.Records[0].ShardID)
+	if string(consumer.Records[0].ShardID) != "00000000" {
+		t.Errorf("Expected Shard ID to be \"00000000\", got %s", consumer.Records[0].ShardID)
 	}
 
 	if !consumer.IsShutdown {
