@@ -8,6 +8,7 @@ check test tests:
 
 integration: get
 	@go test -timeout 30s -tags=integration
+	@go test -run TestRebalance -count 25 -tags=integration
 
 docker-integration:
 	@docker-compose run gokini make integration
