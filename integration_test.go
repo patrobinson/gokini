@@ -209,7 +209,6 @@ func TestRebalance(t *testing.T) {
 		t.Fatalf("Error creating stream %s", err)
 	}
 	kc := setupConsumer(name, t)
-	time.Sleep(600 * time.Millisecond)
 	secondKc := setupConsumer(name, t)
 	defer deleteStream(name)
 	defer deleteTable(name)
