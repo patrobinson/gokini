@@ -169,9 +169,15 @@ func TestStartConsumer(t *testing.T) {
 	}
 
 	if len(consumer.Records) != 1 {
-		t.Errorf("Expected there to be one record from Kinesis, got %d", len(consumer.Records))
-	} else if string(consumer.Records[0].Data) != "Hello World" {
-		t.Errorf("Expected record to be \"Hello World\", got %s", consumer.Records[1].Data)
+		t.Fatalf("Expected there to be one record from Kinesis, got %d", len(consumer.Records))
+	}
+
+	if string(consumer.Records[0].Data) != "Hello World" {
+		t.Errorf("Expected record to be \"Hello World\", got %s", consumer.Records[0].Data)
+	}
+
+	if string(consumer.Records[0].ShardID) != "00000001" {
+		t.Errorf("Expected Shard ID to be \"00000001\", got %s", consumer.Records[0].ShardID)
 	}
 
 	if !consumer.IsShutdown {

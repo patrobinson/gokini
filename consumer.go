@@ -42,6 +42,7 @@ type Records struct {
 	Data           []byte `json:"data"`
 	PartitionKey   string `json:"partitionKey"`
 	SequenceNumber string `json:"sequenceNumber"`
+	ShardID        string `json:"shardID"`
 }
 
 type shardStatus struct {
@@ -392,6 +393,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 				Data:           r.Data,
 				PartitionKey:   *r.PartitionKey,
 				SequenceNumber: *r.SequenceNumber,
+				ShardID:        shardID,
 			}
 			records = append(records, record)
 			recordBytes += int64(len(record.Data))
