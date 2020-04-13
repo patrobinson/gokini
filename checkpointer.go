@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -87,19 +88,11 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 
 	assignedVar, assignedToOk := currentCheckpoint["AssignedTo"]
 	leaseVar, leaseTimeoutOk := currentCheckpoint["LeaseTimeout"]
-	var conditionalExpression string
-	var expressionAttributeValues map[string]*dynamodb.AttributeValue
+
+	var cond expression.ConditionBuilder
 
 	if !leaseTimeoutOk || !assignedToOk {
-		conditionalExpression = "attribute_not_exists(AssignedTo)"
-		if shard.Checkpoint != "" {
-			conditionalExpression = conditionalExpression + " AND SequenceID = :id"
-			expressionAttributeValues = map[string]*dynamodb.AttributeValue{
-				":id": {
-					S: &shard.Checkpoint,
-				},
-			}
-		}
+		cond = expression.Name("AssignedTo").AttributeNotExists()
 	} else {
 		assignedTo := *assignedVar.S
 		leaseTimeout := *leaseVar.S
@@ -111,59 +104,50 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 		if !time.Now().UTC().After(currentLeaseTimeout) && assignedTo != newAssignTo {
 			return errors.New(ErrLeaseNotAquired)
 		}
-		log.Debugf("Attempting to get a lock for shard: %s, leaseTimeout: %s, assignedTo: %s", shard.ID, currentLeaseTimeout, assignedTo)
-		conditionalExpression = "ShardID = :id AND AssignedTo = :assigned_to AND LeaseTimeout = :lease_timeout"
-		expressionAttributeValues = map[string]*dynamodb.AttributeValue{
-			":id": {
+		cond = expression.Name("AssignedTo").Equal(expression.Value(assignedVar))
+	}
+	if shard.Checkpoint != "" {
+		cond = cond.And(
+			expression.Name("SequenceID").Equal(expression.Value(shard.Checkpoint)),
+		)
+	}
+
+	update := expression.Set(
+		expression.Name("AssignedTo"),
+		expression.Value(newAssignTo),
+	).Set(
+		expression.Name("LeaseTimeout"),
+		expression.Value(newLeaseTimeoutString),
+	)
+	if shard.ParentShardID != nil {
+		update.Set(
+			expression.Name("ParentShardID"),
+			expression.Value(shard.ParentShardID),
+		)
+	}
+
+	expr, err := expression.NewBuilder().
+		WithUpdate(update).
+		WithCondition(cond).
+		Build()
+	if err != nil {
+		return err
+	}
+
+	i := &dynamodb.UpdateItemInput{
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		ConditionExpression:       expr.Condition(),
+		TableName:                 &c.TableName,
+		Key: map[string]*dynamodb.AttributeValue{
+			"ShardID": {
 				S: &shard.ID,
 			},
-			":assigned_to": {
-				S: &assignedTo,
-			},
-			":lease_timeout": {
-				S: &leaseTimeout,
-			},
-		}
-		if shard.Checkpoint != "" {
-			conditionalExpression = conditionalExpression + " AND SequenceID = :sid"
-			expressionAttributeValues[":sid"] = &dynamodb.AttributeValue{
-				S: &shard.Checkpoint,
-			}
-		}
-		if shard.ClaimRequest == nil {
-			conditionalExpression = conditionalExpression + " AND attribute_not_exists(ClaimRequest)"
-		} else {
-			conditionalExpression = conditionalExpression + " AND ClaimRequest = :claim_request"
-			expressionAttributeValues[":claim_request"] = &dynamodb.AttributeValue{
-				S: shard.ClaimRequest,
-			}
-		}
-	}
-
-	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
-		"ShardID": {
-			S: &shard.ID,
 		},
-		"AssignedTo": {
-			S: &newAssignTo,
-		},
-		"LeaseTimeout": {
-			S: &newLeaseTimeoutString,
-		},
-		"Closed": {
-			BOOL: &shard.Closed,
-		},
+		UpdateExpression: expr.Update(),
 	}
-
-	if shard.ParentShardID != nil {
-		marshalledCheckpoint["ParentShardID"] = &dynamodb.AttributeValue{S: shard.ParentShardID}
-	}
-
-	if shard.Checkpoint != "" {
-		marshalledCheckpoint["SequenceID"] = &dynamodb.AttributeValue{S: &shard.Checkpoint}
-	}
-
-	err = c.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)
+	log.Traceln(i)
+	_, err = c.svc.UpdateItem(i)
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == dynamodb.ErrCodeConditionalCheckFailedException {
@@ -184,28 +168,36 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 
 // CheckpointSequence writes a checkpoint at the designated sequence ID
 func (c *DynamoCheckpoint) CheckpointSequence(shard *shardStatus) error {
-	leaseTimeout := shard.LeaseTimeout.UTC().Format(time.RFC3339Nano)
-	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
-		"ShardID": {
-			S: &shard.ID,
-		},
-		"SequenceID": {
-			S: &shard.Checkpoint,
-		},
-		"AssignedTo": {
-			S: &shard.AssignedTo,
-		},
-		"LeaseTimeout": {
-			S: &leaseTimeout,
-		},
-		"Closed": {
-			BOOL: &shard.Closed,
-		},
+	update := expression.Set(
+		expression.Name("SequenceID"),
+		expression.Value(shard.Checkpoint),
+	).Set(
+		expression.Name("Closed"),
+		expression.Value(shard.Closed),
+	)
+	cond := expression.Name("ClaimRequest").AttributeNotExists().And(
+		expression.Name("AssignedTo").Equal(expression.Value(shard.AssignedTo)),
+	)
+	expr, err := expression.NewBuilder().
+		WithUpdate(update).
+		WithCondition(cond).
+		Build()
+	if err != nil {
+		return err
 	}
-	if shard.ParentShardID != nil {
-		marshalledCheckpoint["ParentShardID"] = &dynamodb.AttributeValue{S: shard.ParentShardID}
-	}
-	return c.saveItem(marshalledCheckpoint)
+	_, err = c.svc.UpdateItem(&dynamodb.UpdateItemInput{
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		ConditionExpression:       expr.Condition(),
+		TableName:                 aws.String(c.TableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"ShardID": {
+				S: &shard.ID,
+			},
+		},
+		UpdateExpression: expr.Update(),
+	})
+	return err
 }
 
 // FetchCheckpoint retrieves the checkpoint for the given shard
@@ -292,56 +284,33 @@ func (c *DynamoCheckpoint) ClaimShard(shard *shardStatus, claimID string) error 
 	if err != nil {
 		return err
 	}
-	leaseTimeoutString := shard.LeaseTimeout.Format(time.RFC3339Nano)
-	conditionalExpression := `ShardID = :id AND
-	AssignedTo = :assigned_to AND
-	LeaseTimeout = :lease_timeout AND
-	Closed = :closed AND
-	attribute_not_exists(ClaimRequest)`
-	expressionAttributeValues := map[string]*dynamodb.AttributeValue{
-		":id": {
-			S: &shard.ID,
-		},
-		":assigned_to": {
-			S: &shard.AssignedTo,
-		},
-		":lease_timeout": {
-			S: &leaseTimeoutString,
-		},
-		":closed": {
-			BOOL: &shard.Closed,
-		},
+	update := expression.Set(
+		expression.Name("ClaimRequest"),
+		expression.Value(claimID),
+	)
+	cond := expression.Name("ClaimRequest").AttributeNotExists().And(
+		expression.Name("AssignedTo").Equal(expression.Value(shard.AssignedTo)),
+	)
+	expr, err := expression.NewBuilder().
+		WithUpdate(update).
+		WithCondition(cond).
+		Build()
+	if err != nil {
+		return err
 	}
-	if shard.Checkpoint == "" {
-		conditionalExpression += " AND attribute_not_exists(SequenceID)"
-	} else {
-		conditionalExpression += " AND SequenceID = :sequence_id"
-		expressionAttributeValues[":sequence_id"] = &dynamodb.AttributeValue{S: &shard.Checkpoint}
-	}
-	if shard.ParentShardID != nil {
-		conditionalExpression += " AND ParentShardID = :parent_shard"
-		expressionAttributeValues[":parent_shard"] = &dynamodb.AttributeValue{S: shard.ParentShardID}
-	} else {
-		conditionalExpression += " AND attribute_not_exists(ParentShardID)"
-	}
-	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
-		"ShardID": {
-			S: &shard.ID,
+	_, err = c.svc.UpdateItem(&dynamodb.UpdateItemInput{
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		ConditionExpression:       expr.Condition(),
+		TableName:                 aws.String(c.TableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"ShardID": {
+				S: &shard.ID,
+			},
 		},
-		"AssignedTo": {
-			S: &shard.AssignedTo,
-		},
-		"LeaseTimeout": {
-			S: &leaseTimeoutString,
-		},
-		"Closed": {
-			BOOL: &shard.Closed,
-		},
-		"ClaimRequest": {
-			S: &claimID,
-		},
-	}
-	return c.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)
+		UpdateExpression: expr.Update(),
+	})
+	return err
 }
 
 func (c *DynamoCheckpoint) createTable() error {
@@ -377,31 +346,6 @@ func (c *DynamoCheckpoint) doesTableExist() bool {
 	}
 	_, err := c.svc.DescribeTable(input)
 	return (err == nil)
-}
-
-func (c *DynamoCheckpoint) saveItem(item map[string]*dynamodb.AttributeValue) error {
-	return c.putItem(&dynamodb.PutItemInput{
-		TableName: aws.String(c.TableName),
-		Item:      item,
-	})
-}
-
-func (c *DynamoCheckpoint) conditionalUpdate(conditionExpression string, expressionAttributeValues map[string]*dynamodb.AttributeValue, item map[string]*dynamodb.AttributeValue) error {
-	err := c.putItem(&dynamodb.PutItemInput{
-		ConditionExpression:       aws.String(conditionExpression),
-		TableName:                 aws.String(c.TableName),
-		Item:                      item,
-		ExpressionAttributeValues: expressionAttributeValues,
-	})
-	if err != nil {
-		log.Debugln(conditionExpression, expressionAttributeValues)
-	}
-	return err
-}
-
-func (c *DynamoCheckpoint) putItem(input *dynamodb.PutItemInput) error {
-	_, err := c.svc.PutItem(input)
-	return err
 }
 
 func (c *DynamoCheckpoint) getItem(shardID string) (map[string]*dynamodb.AttributeValue, error) {

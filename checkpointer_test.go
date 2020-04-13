@@ -3,9 +3,7 @@ package gokini
 import (
 	"errors"
 	"testing"
-	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -27,6 +25,11 @@ func (m *mockDynamoDB) DescribeTable(*dynamodb.DescribeTableInput) (*dynamodb.De
 
 func (m *mockDynamoDB) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
 	m.item = input.Item
+	return nil, nil
+}
+
+// To hard to implement this
+func (m *mockDynamoDB) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 	return nil, nil
 }
 
@@ -54,78 +57,5 @@ func TestDoesTableExist(t *testing.T) {
 	checkpoint.svc = svc
 	if checkpoint.doesTableExist() {
 		t.Error("Table does not exist but returned true")
-	}
-}
-
-func TestGetLeaseNotAquired(t *testing.T) {
-	svc := &mockDynamoDB{tableExist: true}
-	checkpoint := &DynamoCheckpoint{
-		TableName:      "TableName",
-		Session:        session.New(),
-		skipTableCheck: true,
-	}
-	checkpoint.Init()
-	checkpoint.svc = svc
-	err := checkpoint.GetLease(&shardStatus{
-		ID:         "0001",
-		Checkpoint: "",
-	}, "abcd-efgh")
-	if err != nil {
-		t.Errorf("Error getting lease %s", err)
-	}
-
-	err = checkpoint.GetLease(&shardStatus{
-		ID:         "0001",
-		Checkpoint: "",
-	}, "ijkl-mnop")
-	if err == nil || err.Error() != ErrLeaseNotAquired {
-		t.Errorf("Got a lease when it was already held by abcd-efgh: %s", err)
-	}
-}
-
-func TestGetLeaseAquired(t *testing.T) {
-	svc := &mockDynamoDB{tableExist: true}
-	checkpoint := &DynamoCheckpoint{
-		TableName:      "TableName",
-		Session:        session.New(),
-		skipTableCheck: true,
-	}
-	checkpoint.svc = svc
-	checkpoint.Init()
-	checkpoint.svc = svc
-	marshalledCheckpoint := map[string]*dynamodb.AttributeValue{
-		"ShardID": {
-			S: aws.String("0001"),
-		},
-		"AssignedTo": {
-			S: aws.String("abcd-efgh"),
-		},
-		"LeaseTimeout": {
-			S: aws.String(time.Now().AddDate(0, -1, 0).UTC().Format(time.RFC3339)),
-		},
-		"SequenceID": {
-			S: aws.String("deadbeef"),
-		},
-	}
-	input := &dynamodb.PutItemInput{
-		TableName: aws.String("TableName"),
-		Item:      marshalledCheckpoint,
-	}
-	checkpoint.svc.PutItem(input)
-	shard := &shardStatus{
-		ID:         "0001",
-		Checkpoint: "deadbeef",
-	}
-	err := checkpoint.GetLease(shard, "ijkl-mnop")
-
-	if err != nil {
-		t.Errorf("Lease not aquired after timeout %s", err)
-	}
-
-	id, ok := svc.item["SequenceID"]
-	if !ok {
-		t.Error("Expected SequenceID to be set by GetLease")
-	} else if *id.S != "deadbeef" {
-		t.Errorf("Expected SequenceID to be deadbeef. Got '%s'", *id.S)
 	}
 }
