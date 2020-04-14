@@ -210,6 +210,7 @@ func (kc *KinesisConsumer) eventLoop() {
 				continue
 			}
 			if stealShard {
+				log.Debugln("Successfully stole shard", shard.ID)
 				kc.shardStealInProgress = false
 			}
 
@@ -500,14 +501,29 @@ func (kc *KinesisConsumer) rebalance() error {
 		numShards += float64(len(shards))
 	}
 	numWorkers := float64(len(workers))
+
 	// 1:1 shards to workers is optimal, so we cannot possibly rebalance
 	if numWorkers >= numShards {
 		log.Debugln("Optimal shard allocation, not stealing any shards", numWorkers, ">", numShards, kc.consumerID)
 		return nil
 	}
-	optimalShards := math.Floor(numWorkers / numShards)
+
+	currentShards, ok := workers[kc.consumerID]
+	var numCurrentShards float64
+	if !ok {
+		numCurrentShards = 0
+		numWorkers++
+	} else {
+		numCurrentShards = float64(len(currentShards))
+	}
+
+	optimalShards := math.Floor(numShards / numWorkers)
+	log.Debugln("Number of shards", numShards)
+	log.Debugln("Number of workers", numWorkers)
+	log.Debugln("Optimal shards", optimalShards)
+	log.Debugln("Current shards", numCurrentShards)
 	// We have more than or equal optimal shards, so no rebalancing can take place
-	if shards, ok := workers[kc.consumerID]; ok && float64(len(shards)) >= optimalShards {
+	if numCurrentShards >= optimalShards {
 		log.Debugln("We have enough shards, not attempting to steal any", kc.consumerID)
 		return nil
 	}
