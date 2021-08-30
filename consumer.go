@@ -1,6 +1,7 @@
 package gokini
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"os"
@@ -370,9 +371,8 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 					continue
 				}
 			}
-			log.Errorf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs)
-			// Forces the shard to become abandon
-			break
+			// This is an exception we cannot handle and therefore we exit
+			panic(fmt.Sprintf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs))
 		}
 		retriedErrors = 0
 
