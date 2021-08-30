@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 )
 
@@ -153,7 +154,7 @@ func TestPrometheusMonitoring(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error starting consumer %s", err)
 	}
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 
 	res, err := http.Get("http://localhost:8080/metrics")
 	if err != nil {
@@ -166,6 +167,10 @@ func TestPrometheusMonitoring(t *testing.T) {
 	res.Body.Close()
 	if err != nil {
 		t.Errorf("Error reading monitoring response %s", err)
+	}
+
+	if parsed["gokini_processed_bytes"] == nil || parsed["gokini_processed_records"] == nil || parsed["gokini_leases_held"] == nil {
+		t.Fatalf("Missing metrics %s", keys(parsed))
 	}
 
 	if *parsed["gokini_processed_bytes"].Metric[0].Counter.Value != float64(4) {
@@ -227,4 +232,12 @@ func TestRebalance(t *testing.T) {
 	}
 	kc.Shutdown()
 	secondKc.Shutdown()
+}
+
+func keys(m map[string]*dto.MetricFamily) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
