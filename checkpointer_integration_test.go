@@ -69,6 +69,12 @@ func TestGetLeaseAquired(t *testing.T) {
 
 	if err != nil {
 		t.Errorf("Lease not aquired after timeout %s", err)
+		t.Log(checkpoint.svc.GetItem(&dynamodb.GetItemInput{TableName: aws.String("TableName"),
+			Key: map[string]*dynamodb.AttributeValue{
+				"ShardID": {
+					S: aws.String("0001"),
+				},
+			}}))
 	}
 
 	checkpoint.FetchCheckpoint(shard)

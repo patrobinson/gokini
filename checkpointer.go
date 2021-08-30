@@ -104,7 +104,7 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 		if !time.Now().UTC().After(currentLeaseTimeout) && assignedTo != newAssignTo {
 			return errors.New(ErrLeaseNotAquired)
 		}
-		cond = expression.Name("AssignedTo").Equal(expression.Value(assignedVar))
+		cond = expression.Name("AssignedTo").Equal(expression.Value(assignedTo))
 	}
 	if shard.Checkpoint != "" {
 		cond = cond.And(
@@ -151,6 +151,7 @@ func (c *DynamoCheckpoint) GetLease(shard *shardStatus, newAssignTo string) erro
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == dynamodb.ErrCodeConditionalCheckFailedException {
+				log.Traceln("Condition failed", err)
 				return errors.New(ErrLeaseNotAquired)
 			}
 		}
