@@ -44,18 +44,6 @@ type Records struct {
 	ShardID        string `json:"shardID"`
 }
 
-type shardStatus struct {
-	ID              string
-	Checkpoint      string
-	AssignedTo      string
-	LeaseTimeout    time.Time
-	ParentShardID   *string
-	Closed          bool
-	ClaimRequest    *string
-	readyToBeClosed bool
-	sync.Mutex
-}
-
 // KinesisConsumer contains all the configuration and functions necessary to start the Kinesis Consumer
 type KinesisConsumer struct {
 	StreamName                  string
@@ -75,9 +63,9 @@ type KinesisConsumer struct {
 	millisecondsBackoffClaim    int
 	eventLoopSleepMs            int
 	svc                         kinesisiface.KinesisAPI
-	checkpointer                Checkpointer
+	checkpointer                *DynamoCheckpoint
 	stop                        *chan struct{}
-	shardStatus                 map[string]*shardStatus
+	shards                      map[string]*ShardStateMachine
 	consumerID                  string
 	mService                    monitoringService
 	shardStealInProgress        bool
@@ -88,6 +76,9 @@ var defaultRetries = 5
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
+	/*
+	**	Initialisation
+	 */
 	rand.Seed(time.Now().UnixNano())
 
 	// Set Defaults
@@ -150,7 +141,7 @@ func (kc *KinesisConsumer) StartConsumer() error {
 		return errors.Wrapf(err, "Failed to start Checkpointer")
 	}
 
-	kc.shardStatus = make(map[string]*shardStatus)
+	kc.shards = make(map[string]*ShardStateMachine)
 
 	stopChan := make(chan struct{})
 	kc.stop = &stopChan
@@ -173,54 +164,28 @@ func (kc *KinesisConsumer) eventLoop() {
 			log.Errorf("Error getting Kinesis shards: %s", err)
 			// Back-off?
 			time.Sleep(500 * time.Millisecond)
+			continue
 		}
-		log.Debugf("Found %d shards", len(kc.shardStatus))
+		log.Debugf("Found %d shards", len(kc.shards))
 
-		for _, shard := range kc.shardStatus {
+		for _, shard := range kc.shards {
 			// We already own this shard so carry on
-			if shard.AssignedTo == kc.consumerID {
+			if shard.AssignedTo() == kc.consumerID {
 				continue
 			}
 
-			err := kc.checkpointer.FetchCheckpoint(shard)
-			if err != nil {
-				if err != ErrSequenceIDNotFound {
-					log.Error(err)
-					continue
-				}
-			}
-
-			var stealShard bool
-			if shard.ClaimRequest != nil {
-				if shard.LeaseTimeout.Before(time.Now().Add(time.Millisecond * time.Duration(kc.millisecondsBackoffClaim))) {
-					if *shard.ClaimRequest != kc.consumerID {
-						log.Debugln("Shard being stolen", shard.ID)
-						continue
-					} else {
-						stealShard = true
-						log.Debugln("Stealing shard", shard.ID)
-					}
-				}
-			}
-
-			err = kc.checkpointer.GetLease(shard, kc.consumerID)
-			if err != nil {
-				if err.Error() != ErrLeaseNotAquired {
-					log.Error(err)
-				}
+			err = shard.GetLease(kc.consumerID)
+			if err == nil {
+				kc.mService.leaseGained(shard.ID())
+				kc.RecordConsumer.Init(shard.ID())
+				log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
+				kc.Add(1)
+				go kc.getRecords(shard.ID())
 				continue
 			}
-			if stealShard {
-				log.Debugln("Successfully stole shard", shard.ID)
-				kc.shardStealInProgress = false
+			if err.Error() != ErrLeaseNotAcquired {
+				log.Error(err)
 			}
-
-			kc.mService.leaseGained(shard.ID)
-
-			kc.RecordConsumer.Init(shard.ID)
-			log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
-			kc.Add(1)
-			go kc.getRecords(shard.ID)
 		}
 
 		err = kc.rebalance()
@@ -263,12 +228,13 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 
 	var lastShardID string
 	for _, s := range streamDesc.StreamDescription.Shards {
-		if _, ok := kc.shardStatus[*s.ShardId]; !ok {
+		if _, ok := kc.shards[*s.ShardId]; !ok {
 			log.Debugf("Found shard with id %s", *s.ShardId)
-			kc.shardStatus[*s.ShardId] = &shardStatus{
-				ID:            *s.ShardId,
-				ParentShardID: s.ParentShardId,
+			machine, err := NewShardStateMachine(s.ShardId, s.ParentShardId, kc.checkpointer)
+			if err != nil {
+				return err
 			}
+			kc.shards[*s.ShardId] = machine
 		}
 		lastShardID = *s.ShardId
 	}
@@ -283,15 +249,15 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 	return nil
 }
 
-func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error) {
-	err := kc.checkpointer.FetchCheckpoint(shard)
-	if err != nil && err != ErrSequenceIDNotFound {
+func (kc *KinesisConsumer) getShardIterator(shard *ShardStateMachine) (*string, error) {
+	err := shard.Sync(kc.checkpointer)
+	if err != nil {
 		return nil, err
 	}
 
-	if shard.Checkpoint == "" {
+	if shard.Checkpoint() == "" {
 		shardIterArgs := &kinesis.GetShardIteratorInput{
-			ShardId:           &shard.ID,
+			ShardId:           aws.String(shard.ID()),
 			ShardIteratorType: &kc.ShardIteratorType,
 			StreamName:        &kc.StreamName,
 		}
@@ -303,9 +269,9 @@ func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error)
 	}
 
 	shardIterArgs := &kinesis.GetShardIteratorInput{
-		ShardId:                &shard.ID,
+		ShardId:                aws.String(shard.ID()),
 		ShardIteratorType:      aws.String("AFTER_SEQUENCE_NUMBER"),
-		StartingSequenceNumber: &shard.Checkpoint,
+		StartingSequenceNumber: aws.String(shard.Checkpoint()),
 		StreamName:             &kc.StreamName,
 	}
 	iterResp, err := kc.svc.GetShardIterator(shardIterArgs)
@@ -318,7 +284,7 @@ func (kc *KinesisConsumer) getShardIterator(shard *shardStatus) (*string, error)
 func (kc *KinesisConsumer) getRecords(shardID string) {
 	defer kc.Done()
 
-	shard := kc.shardStatus[shardID]
+	shard := kc.shards[shardID]
 	shardIterator, err := kc.getShardIterator(shard)
 	if err != nil {
 		kc.RecordConsumer.Shutdown()
@@ -330,25 +296,11 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 
 	for {
 		getRecordsStartTime := time.Now()
-		err := kc.checkpointer.FetchCheckpoint(shard)
-		if err != nil && err != ErrSequenceIDNotFound {
-			log.Errorln("Error fetching checkpoint", err)
-			time.Sleep(time.Duration(defaultEventLoopSleepMs) * time.Second)
-			continue
-		}
-		if shard.ClaimRequest != nil {
-			// Claim request means another worker wants to steal our shard. So let the lease lapse
-			log.Infof("Shard %s has been stolen from us", shardID)
-			return
-		}
-		if time.Now().UTC().After(shard.LeaseTimeout.Add(-5 * time.Second)) {
-			err = kc.checkpointer.GetLease(shard, kc.consumerID)
+		if time.Now().UTC().After(shard.LeaseTimeout().Add(-5 * time.Second)) {
+			err = shard.RenewLease(kc.consumerID)
 			if err != nil {
-				if err.Error() == ErrLeaseNotAquired {
-					shard.Lock()
-					defer shard.Unlock()
-					shard.AssignedTo = ""
-					kc.mService.leaseLost(shard.ID)
+				if err.Error() == ErrLeaseNotAcquired {
+					kc.mService.leaseLost(shard.ID())
 					log.Debugln("Lease lost for shard", shard.ID, kc.consumerID)
 					return
 				}
@@ -394,31 +346,27 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 
 		// Convert from nanoseconds to milliseconds
 		processedRecordsTiming := time.Since(processRecordsStartTime) / 1000000
-		kc.mService.recordProcessRecordsTime(shard.ID, float64(processedRecordsTiming))
+		kc.mService.recordProcessRecordsTime(shard.ID(), float64(processedRecordsTiming))
 
 		if len(records) == 0 {
 			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
 		} else if !kc.DisableAutomaticCheckpoints {
-			kc.Checkpoint(shardID, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
+			shard.CheckpointSequence(*getResp.Records[len(getResp.Records)-1].SequenceNumber, kc.consumerID)
 		}
 
-		kc.mService.incrRecordsProcessed(shard.ID, len(records))
-		kc.mService.incrBytesProcessed(shard.ID, recordBytes)
-		kc.mService.millisBehindLatest(shard.ID, float64(*getResp.MillisBehindLatest))
+		kc.mService.incrRecordsProcessed(shard.ID(), len(records))
+		kc.mService.incrBytesProcessed(shard.ID(), recordBytes)
+		kc.mService.millisBehindLatest(shard.ID(), float64(*getResp.MillisBehindLatest))
 
 		// Convert from nanoseconds to milliseconds
 		getRecordsTime := time.Since(getRecordsStartTime) / 1000000
-		kc.mService.recordGetRecordsTime(shard.ID, float64(getRecordsTime))
+		kc.mService.recordGetRecordsTime(shard.ID(), float64(getRecordsTime))
 
 		// The shard has been closed, so no new records can be read from it
 		if getResp.NextShardIterator == nil {
 			log.Debugf("Shard %s closed", shardID)
-			shard := kc.shardStatus[shardID]
-			shard.Lock()
-			shard.readyToBeClosed = true
-			shard.Unlock()
 			if !kc.DisableAutomaticCheckpoints {
-				kc.Checkpoint(shardID, *getResp.Records[len(getResp.Records)-1].SequenceNumber)
+				shard.Close(*getResp.Records[len(getResp.Records)-1].SequenceNumber, kc.consumerID)
 			}
 			return
 		}
@@ -433,43 +381,11 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 	}
 }
 
-// Checkpoint records the sequence number for the given shard ID as being processed
 func (kc *KinesisConsumer) Checkpoint(shardID string, sequenceNumber string) error {
-	shard := kc.shardStatus[shardID]
-	shard.Lock()
-	shard.Checkpoint = sequenceNumber
-	shard.Unlock()
-	// If shard is closed and we've read all records from the shard, mark the shard as closed
-	if shard.readyToBeClosed {
-		var err error
-		shard.Closed, err = kc.shardIsEmpty(shard)
-		if err != nil {
-			return err
-		}
+	if shard, ok := kc.shards[shardID]; ok {
+		return shard.CheckpointSequence(sequenceNumber, kc.consumerID)
 	}
-	return kc.checkpointer.CheckpointSequence(shard)
-}
-
-func (kc *KinesisConsumer) shardIsEmpty(shard *shardStatus) (empty bool, err error) {
-	iterResp, err := kc.svc.GetShardIterator(&kinesis.GetShardIteratorInput{
-		ShardId:                &shard.ID,
-		ShardIteratorType:      aws.String("AFTER_SEQUENCE_NUMBER"),
-		StartingSequenceNumber: &shard.Checkpoint,
-		StreamName:             &kc.StreamName,
-	})
-	if err != nil {
-		return
-	}
-	recordsResp, err := kc.svc.GetRecords(&kinesis.GetRecordsInput{
-		ShardIterator: iterResp.ShardIterator,
-	})
-	if err != nil {
-		return
-	}
-	if len(recordsResp.Records) == 0 {
-		empty = true
-	}
-	return
+	return fmt.Errorf("Unknown shard ID %s", shardID)
 }
 
 func (kc *KinesisConsumer) rebalance() error {
@@ -477,23 +393,6 @@ func (kc *KinesisConsumer) rebalance() error {
 	if err != nil {
 		log.Debugln("Error listing workings", kc.consumerID, err)
 		return err
-	}
-
-	// Only attempt to steal one shard at at time, to allow for linear convergence
-	if kc.shardStealInProgress {
-		err := kc.getShardIDs("")
-		if err != nil {
-			return err
-		}
-		for _, shard := range kc.shardStatus {
-			if shard.ClaimRequest != nil && *shard.ClaimRequest == kc.consumerID {
-				log.Debugln("Steal in progress", kc.consumerID)
-				return nil
-			}
-			// Our shard steal was stomped on by a Checkpoint.
-			// We could deal with that, but instead just try again
-			kc.shardStealInProgress = false
-		}
 	}
 
 	var numShards float64
@@ -542,15 +441,9 @@ func (kc *KinesisConsumer) rebalance() error {
 	}
 
 	// Steal a random shard from the worker with the most shards
-	kc.shardStealInProgress = true
 	randIndex := rand.Perm(len(workers[*workerSteal]))[0]
 	shardToSteal := workers[*workerSteal][randIndex]
 	log.Debugln("Stealing shard", shardToSteal, "from", *workerSteal)
-	err = kc.checkpointer.ClaimShard(&shardStatus{
-		ID: shardToSteal,
-	}, kc.consumerID)
-	if err != nil {
-		kc.shardStealInProgress = false
-	}
+	err = kc.shards[shardToSteal].ClaimShard(kc.consumerID)
 	return err
 }
