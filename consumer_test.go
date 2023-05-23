@@ -3,13 +3,14 @@ package gokini
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
+	"github.com/mixer/clock"
 )
 
 type testConsumer struct {
@@ -64,54 +65,6 @@ func (k *mockKinesisClient) DescribeStream(args *kinesis.DescribeStreamInput) (*
 	}, nil
 }
 
-type mockCheckpointer struct {
-	checkpointFound    bool
-	checkpoint         map[string]*shardStatus
-	checkpointerCalled bool
-	sync.Mutex
-}
-
-func (c *mockCheckpointer) Init() error {
-	c.checkpoint = make(map[string]*shardStatus)
-	return nil
-}
-
-func (c *mockCheckpointer) GetLease(shard *shardStatus, assignTo string) error {
-	shard.Lock()
-	shard.AssignedTo = assignTo
-	shard.LeaseTimeout = time.Now()
-	shard.Unlock()
-	return nil
-}
-
-func (c *mockCheckpointer) CheckpointSequence(shard *shardStatus) error {
-	c.Lock()
-	defer c.Unlock()
-	c.checkpoint[shard.ID] = shard
-	c.checkpointerCalled = true
-	return nil
-}
-func (c *mockCheckpointer) FetchCheckpoint(shard *shardStatus) error {
-	if c.checkpointFound {
-		if checkpointShard, ok := c.checkpoint[shard.ID]; ok {
-			shard.Checkpoint = checkpointShard.Checkpoint
-			shard.AssignedTo = checkpointShard.AssignedTo
-		} else {
-			shard.Checkpoint = "ABCD124"
-			shard.AssignedTo = "abcdef-1234567"
-		}
-	}
-	return nil
-}
-
-func (c *mockCheckpointer) ListActiveWorkers() (map[string][]string, error) {
-	return nil, nil
-}
-
-func (c *mockCheckpointer) ClaimShard(*shardStatus, string) error {
-	return nil
-}
-
 func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.GetRecordsOutput, error) {
 	k.numberRecordsSent++
 	var nextShardIterator *string
@@ -125,22 +78,26 @@ func (k *mockKinesisClient) GetRecords(args *kinesis.GetRecordsInput) (*kinesis.
 			&kinesis.Record{
 				Data:           k.RecordData,
 				PartitionKey:   aws.String("abcdefg"),
-				SequenceNumber: aws.String(strings.Join([]string{"0000", string(k.numberRecordsSent)}, "")),
+				SequenceNumber: aws.String(strings.Join([]string{"0000", fmt.Sprint(k.numberRecordsSent)}, "")),
 			},
 		},
 	}, nil
 }
 
-func createConsumer(t *testing.T, numRecords int, checkpointFound bool, shutdown bool) (consumer *testConsumer, kinesisSvc *mockKinesisClient, checkpointer *mockCheckpointer) {
+func createConsumer(t *testing.T, numRecords int, checkpointFound bool, shutdown bool) (consumer *testConsumer, kinesisSvc *mockKinesisClient, checkpointer *DynamoCheckpoint) {
 	consumer = &testConsumer{}
 	kinesisSvc = &mockKinesisClient{
 		NumberRecordsBeforeClosing: numRecords,
 		RecordData:                 []byte("Hello World"),
 		numShards:                  1,
 	}
-	checkpointer = &mockCheckpointer{
-		checkpointFound: checkpointFound,
+	date, _ := time.Parse(time.UnixDate, "Sat Mar  7 11:12:39 PST 2015")
+	c := clock.NewMockClock(date)
+	checkpointer = &DynamoCheckpoint{
+		TableName: "TableName",
+		Session:   session.New(),
 	}
+	checkpointer.Init()
 	kc := &KinesisConsumer{
 		StreamName:        "FOO",
 		ShardIteratorType: "TRIM_HORIZON",
@@ -148,6 +105,7 @@ func createConsumer(t *testing.T, numRecords int, checkpointFound bool, shutdown
 		checkpointer:      checkpointer,
 		svc:               kinesisSvc,
 		eventLoopSleepMs:  1,
+		Clock:             c,
 	}
 
 	err := kc.StartConsumer()

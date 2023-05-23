@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
 	"github.com/google/uuid"
+	"github.com/mixer/clock"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -69,6 +70,7 @@ type KinesisConsumer struct {
 	consumerID                  string
 	mService                    monitoringService
 	shardStealInProgress        bool
+	Clock                       clock.Clock
 	sync.WaitGroup
 }
 
@@ -76,6 +78,7 @@ var defaultRetries = 5
 
 // StartConsumer starts the RecordConsumer, calls Init and starts sending records to ProcessRecords
 func (kc *KinesisConsumer) StartConsumer() error {
+	kc.Clock = clock.C
 	/*
 	**	Initialisation
 	 */
@@ -163,7 +166,7 @@ func (kc *KinesisConsumer) eventLoop() {
 		if err != nil {
 			log.Errorf("Error getting Kinesis shards: %s", err)
 			// Back-off?
-			time.Sleep(500 * time.Millisecond)
+			kc.Clock.Sleep(500 * time.Millisecond)
 			continue
 		}
 		log.Debugf("Found %d shards", len(kc.shards))
@@ -178,7 +181,7 @@ func (kc *KinesisConsumer) eventLoop() {
 			if err == nil {
 				kc.mService.leaseGained(shard.ID())
 				kc.RecordConsumer.Init(shard.ID())
-				log.Debugf("Starting consumer for shard %s on %s", shard.ID, shard.AssignedTo)
+				log.Debugf("Starting consumer for shard %s on %s", shard.ID(), shard.AssignedTo())
 				kc.Add(1)
 				go kc.getRecords(shard.ID())
 				continue
@@ -197,7 +200,7 @@ func (kc *KinesisConsumer) eventLoop() {
 		case <-*kc.stop:
 			log.Info("Shutting down")
 			return
-		case <-time.After(time.Duration(kc.eventLoopSleepMs) * time.Millisecond):
+		case <-kc.Clock.After(time.Duration(kc.eventLoopSleepMs) * time.Millisecond):
 		}
 	}
 }
@@ -295,17 +298,17 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 	var retriedErrors int
 
 	for {
-		getRecordsStartTime := time.Now()
-		if time.Now().UTC().After(shard.LeaseTimeout().Add(-5 * time.Second)) {
+		getRecordsStartTime := kc.Clock.Now()
+		if kc.Clock.Now().UTC().After(shard.LeaseTimeout().Add(-5 * time.Second)) {
 			err = shard.RenewLease(kc.consumerID)
 			if err != nil {
 				if err.Error() == ErrLeaseNotAcquired {
 					kc.mService.leaseLost(shard.ID())
-					log.Debugln("Lease lost for shard", shard.ID, kc.consumerID)
+					log.Debugln("Lease lost for shard", shard.ID(), kc.consumerID)
 					return
 				}
 				log.Warnln("Error renewing lease", err)
-				time.Sleep(time.Duration(1) * time.Second)
+				kc.Clock.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
 		}
@@ -319,11 +322,12 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 				if awsErr.Code() == kinesis.ErrCodeProvisionedThroughputExceededException || awsErr.Code() == ErrCodeKMSThrottlingException {
 					log.Errorf("Error getting records from shard %v: %v", shardID, err)
 					retriedErrors++
-					time.Sleep(time.Duration(2^retriedErrors*100) * time.Millisecond)
+					kc.Clock.Sleep(time.Duration(2^retriedErrors*100) * time.Millisecond)
 					continue
 				}
 			}
 			// This is an exception we cannot handle and therefore we exit
+			// Should probably do something other than panic here
 			panic(fmt.Sprintf("Error getting records from Kinesis that cannot be retried: %s\nRequest: %s", err, getRecordsArgs))
 		}
 		retriedErrors = 0
@@ -341,15 +345,15 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 			recordBytes += int64(len(record.Data))
 			log.Tracef("Processing record %s", *r.SequenceNumber)
 		}
-		processRecordsStartTime := time.Now()
+		processRecordsStartTime := kc.Clock.Now()
 		kc.RecordConsumer.ProcessRecords(records, kc)
 
 		// Convert from nanoseconds to milliseconds
-		processedRecordsTiming := time.Since(processRecordsStartTime) / 1000000
+		processedRecordsTiming := kc.Clock.Since(processRecordsStartTime) / 1000000
 		kc.mService.recordProcessRecordsTime(shard.ID(), float64(processedRecordsTiming))
 
 		if len(records) == 0 {
-			time.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
+			kc.Clock.Sleep(time.Duration(kc.EmptyRecordBackoffMs) * time.Millisecond)
 		} else if !kc.DisableAutomaticCheckpoints {
 			shard.CheckpointSequence(*getResp.Records[len(getResp.Records)-1].SequenceNumber, kc.consumerID)
 		}
@@ -359,7 +363,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		kc.mService.millisBehindLatest(shard.ID(), float64(*getResp.MillisBehindLatest))
 
 		// Convert from nanoseconds to milliseconds
-		getRecordsTime := time.Since(getRecordsStartTime) / 1000000
+		getRecordsTime := kc.Clock.Since(getRecordsStartTime) / 1000000
 		kc.mService.recordGetRecordsTime(shard.ID(), float64(getRecordsTime))
 
 		// The shard has been closed, so no new records can be read from it
@@ -376,7 +380,7 @@ func (kc *KinesisConsumer) getRecords(shardID string) {
 		case <-*kc.stop:
 			log.Infoln("Received stop signal, stopping record consumer for", shardID)
 			return
-		case <-time.After(1 * time.Nanosecond):
+		case <-kc.Clock.After(1 * time.Nanosecond):
 		}
 	}
 }
