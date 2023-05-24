@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
+	"github.com/mixer/clock"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -29,16 +30,19 @@ type ShardStateMachine struct {
 	CurrentState ShardState
 
 	*shardStatus
-	dc *DynamoCheckpoint
+	dc    *DynamoCheckpoint
+	Clock clock.Clock
 }
 
 func NewShardStateMachine(ShardID, ParentShardID *string, dc *DynamoCheckpoint) (*ShardStateMachine, error) {
+	c := clock.C
 	m := ShardStateMachine{
 		shardStatus: &shardStatus{
 			id:            *ShardID,
 			parentShardID: ParentShardID,
 		},
-		dc: dc,
+		dc:    dc,
+		Clock: c,
 	}
 	unallocatedState := &UnallocatedShard{
 		machine: m,
@@ -58,7 +62,7 @@ func NewShardStateMachine(ShardID, ParentShardID *string, dc *DynamoCheckpoint) 
 	m.BeingStolen = beingStolenState
 	m.Closed = closedState
 
-	if err := m.Sync(dc); err != nil {
+	if err := m.shardStatus.Sync(dc); err != nil {
 		return nil, err
 	} else if m.AssignedTo() == "" || m.LeaseTimeout().After(time.Now()) {
 		m.SetState((m.Unallocated))
@@ -445,7 +449,7 @@ func (shard *shardStatus) TakeLease(c *DynamoCheckpoint, leaseTimeout, consumerI
 		return err
 	}
 
-	return nil
+	return shard.Sync(c)
 }
 
 func (shard *shardStatus) UpdateCheckpoint(c *DynamoCheckpoint, consumerID, checkpoint string, closed, relinquish bool) error {
@@ -526,5 +530,6 @@ func (shard *shardStatus) Sync(c *DynamoCheckpoint) error {
 		shard.relinquishShard = *relinquishShard.BOOL
 	}
 	log.Debugln("Shard updated", *shard)
+
 	return nil
 }

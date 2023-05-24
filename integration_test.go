@@ -1,4 +1,5 @@
-//+build integration
+//go:build integration
+// +build integration
 
 package gokini
 
@@ -210,7 +211,7 @@ func setupConsumer(name string, t *testing.T) *KinesisConsumer {
 func TestRebalance(t *testing.T) {
 	uuid, _ := uuid.NewUUID()
 	name := uuid.String()
-	err := createStream(name, 2)
+	_, err := createStream(name, 2)
 	if err != nil {
 		t.Fatalf("Error creating stream %s", err)
 	}

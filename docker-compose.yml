@@ -1,7 +1,7 @@
 version: "3.4"
 services:
   kinesis:
-    image: dlsniper/kinesalite
+    image: saidsef/aws-kinesis-local
     ports:
       - 4567:4567
     expose:
