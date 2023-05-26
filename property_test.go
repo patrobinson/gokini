@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/google/uuid"
 	"github.com/mixer/clock"
-	log "github.com/sirupsen/logrus"
 )
 
 type DummyRecordConsumer struct {
@@ -43,9 +42,9 @@ func randMethods(r *rand.Rand) (values []string) {
 	return
 }
 
-func doesAllocateShards(in []string) bool {
-	streamName := "doesAllocateShards"
-	tableName := "doesAllocateShards"
+func doesAllocateShards(in []string, name string) bool {
+	streamName := name
+	tableName := name
 	shards, err := createStream(streamName, 1)
 	defer deleteStream(streamName)
 	defer deleteTable(tableName)
@@ -98,10 +97,11 @@ func doesAllocateShards(in []string) bool {
 }
 
 func TestShardAllocation(t *testing.T) {
-	log.SetLevel(log.DebugLevel)
+	//log.SetLevel(log.TraceLevel)
 	c := quick.Config{MaxCount: 10000,
 		Values: func(values []reflect.Value, r *rand.Rand) {
 			values[0] = reflect.ValueOf(randMethods(r))
+			values[1] = reflect.ValueOf(fmt.Sprintf("doesAllocateShards%d", r.Uint64()))
 		}}
 	if err := quick.Check(doesAllocateShards, &c); err != nil {
 		t.Error(err)
