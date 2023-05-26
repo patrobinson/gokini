@@ -82,6 +82,7 @@ func doesAllocateShards(in []string, name string) bool {
 		RecordConsumer:           rc,
 	}
 	kc.StartConsumer()
+	defer kc.Shutdown()
 	c.AddTime((time.Duration(kc.LeaseDuration) + 5000) * time.Millisecond)
 	time.Sleep(500 * time.Millisecond)
 	if s, ok := kc.shards[*shards[0]]; ok {
