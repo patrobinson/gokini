@@ -172,8 +172,17 @@ func (kc *KinesisConsumer) eventLoop() {
 		log.Debugf("Found %d shards", len(kc.shards))
 
 		for _, shard := range kc.shards {
+			log.Tracef("Inspecting shard %+v", shard)
+			err := shard.Sync()
+			if err != nil {
+				log.Errorf("Error syncing shard status: %s", err)
+				// Back-off?
+				kc.Clock.Sleep(500 * time.Millisecond)
+				continue
+			}
 			// We already own this shard so carry on
 			if shard.AssignedTo() == kc.consumerID {
+				log.Tracef("Shard belongs to us, skipping %+v", shard)
 				continue
 			}
 
@@ -253,7 +262,7 @@ func (kc *KinesisConsumer) getShardIDs(startShardID string) error {
 }
 
 func (kc *KinesisConsumer) getShardIterator(shard *ShardStateMachine) (*string, error) {
-	err := shard.Sync(kc.checkpointer)
+	err := shard.Sync()
 	if err != nil {
 		return nil, err
 	}

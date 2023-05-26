@@ -64,8 +64,8 @@ func NewShardStateMachine(ShardID, ParentShardID *string, dc *DynamoCheckpoint) 
 
 	if err := m.shardStatus.Sync(dc); err != nil {
 		return nil, err
-	} else if m.AssignedTo() == "" || m.LeaseTimeout().After(time.Now()) {
-		m.SetState((m.Unallocated))
+	} else if m.AssignedTo() == "" || m.LeaseTimeout().After(m.Clock.Now()) {
+		m.SetState(m.Unallocated)
 	} else if m.ClaimRequest() != nil {
 		m.SetState(m.BeingStolen)
 	} else {
@@ -98,6 +98,27 @@ func (s *ShardStateMachine) SetState(state ShardState) {
 	s.CurrentState = state
 }
 
+func (s *ShardStateMachine) Sync() error {
+	err := s.shardStatus.Sync(s.dc)
+	if err != nil {
+		return err
+	}
+	switch {
+	case s.closed:
+		s.CurrentState = s.Closed
+	case s.relinquishShard && !s.LeaseTimeout().After(s.Clock.Now()):
+		s.CurrentState = s.BeingStolen
+	case s.AssignedTo() != "" && !s.LeaseTimeout().After(s.Clock.Now()):
+		s.CurrentState = s.Allocated
+	default:
+		s.CurrentState = s.Unallocated
+	}
+
+	//log.Debugf("Current state: %s\n", s.CurrentState.ToString())
+
+	return nil
+}
+
 /*
 #############
 */
@@ -108,6 +129,7 @@ type ShardState interface {
 	ClaimShard(string) error
 	CheckpointSequence(string, string) error
 	Close(string, string) error
+	ToString() string
 }
 
 type UnallocatedShard struct {
@@ -115,17 +137,27 @@ type UnallocatedShard struct {
 }
 
 func (s *UnallocatedShard) GetLease(consumerID string) error {
-	err := s.machine.Sync(s.machine.dc)
+	err := s.machine.Sync()
 	if err != nil {
 		return err
 	}
 
-	if s.machine.AssignedTo() != "" {
+	if s.machine.CurrentState != s.machine.Unallocated {
 		return errors.New(ErrLeaseNotAcquired)
 	}
-	newLeaseTimeout := time.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
+	newLeaseTimeout := s.machine.Clock.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
 	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339Nano)
-	cond := expression.Name("AssignedTo").AttributeNotExists()
+
+	var cond expression.ConditionBuilder
+	if s.machine.AssignedTo() == "" {
+		cond = expression.Name("AssignedTo").AttributeNotExists()
+	} else {
+		cond = cond.And(
+			expression.Name("AssignedTo").Equal(expression.Value(s.machine.AssignedTo())),
+			expression.Name("LeaseTimeout").Equal(expression.Value(s.machine.LeaseTimeout().Format(time.RFC3339Nano))),
+			expression.Name("SequenceID").Equal(expression.Value(s.machine.Checkpoint())),
+		)
+	}
 	err = s.machine.TakeLease(s.machine.dc, newLeaseTimeoutString, consumerID, cond)
 	if err == nil {
 		s.machine.SetState(s.machine.Allocated)
@@ -149,32 +181,36 @@ func (s *UnallocatedShard) Close(_, _ string) error {
 	return fmt.Errorf("No lease exists")
 }
 
+func (s *UnallocatedShard) ToString() string {
+	return "Unallocated"
+}
+
 type AllocatedShard struct {
 	machine ShardStateMachine
 }
 
 func (s *AllocatedShard) GetLease(consumerID string) error {
-	err := s.machine.Sync(s.machine.dc)
+	err := s.machine.Sync()
 	if err != nil {
 		return err
 	}
 
-	if s.machine.LeaseTimeout().After(time.Now()) {
+	if s.machine.LeaseTimeout().After(s.machine.Clock.Now()) {
 		return errors.New(ErrLeaseNotAcquired)
 	}
 
-	newLeaseTimeout := time.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
+	newLeaseTimeout := s.machine.Clock.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
 	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339Nano)
 	cond := expression.Name("AssignedTo").Equal(expression.Value(s.machine.AssignedTo()))
 	cond = cond.And(
-		expression.Name("LeaseTimeout").Equal(expression.Value(s.machine.LeaseTimeout())),
+		expression.Name("LeaseTimeout").Equal(expression.Value(s.machine.LeaseTimeout().Format(time.RFC3339Nano))),
 		expression.Name("SequenceID").Equal(expression.Value(s.machine.Checkpoint())),
 	)
 	return s.machine.TakeLease(s.machine.dc, newLeaseTimeoutString, consumerID, cond)
 }
 
 func (s *AllocatedShard) RenewLease(consumerID string) error {
-	err := s.machine.Sync(s.machine.dc)
+	err := s.machine.Sync()
 	if err != nil {
 		return err
 	}
@@ -185,7 +221,7 @@ func (s *AllocatedShard) RenewLease(consumerID string) error {
 	if cr := s.machine.ClaimRequest(); cr != nil || *cr != "" {
 		return errors.New(ErrLeaseNotAcquired)
 	}
-	newLeaseTimeout := time.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
+	newLeaseTimeout := s.machine.Clock.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
 	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339Nano)
 	cond := expression.Name("AssignedTo").Equal(expression.Value(consumerID))
 	cond = cond.And(
@@ -205,7 +241,7 @@ func (s *AllocatedShard) CheckpointSequence(checkpoint string, consumerID string
 }
 
 func (s *AllocatedShard) ClaimShard(consumerID string) error {
-	err := s.machine.Sync(s.machine.dc)
+	err := s.machine.Sync()
 	if err != nil {
 		return err
 	}
@@ -227,12 +263,16 @@ func (s *AllocatedShard) Close(checkpoint string, consumerID string) error {
 	return err
 }
 
+func (s *AllocatedShard) ToString() string {
+	return "Allocated"
+}
+
 type BeingStolenShard struct {
 	machine ShardStateMachine
 }
 
 func (s *BeingStolenShard) GetLease(consumerID string) error {
-	err := s.machine.Sync(s.machine.dc)
+	err := s.machine.Sync()
 	if err != nil {
 		return err
 	}
@@ -241,7 +281,7 @@ func (s *BeingStolenShard) GetLease(consumerID string) error {
 		return errors.New(ErrLeaseNotAcquired)
 	}
 
-	newLeaseTimeout := time.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
+	newLeaseTimeout := s.machine.Clock.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
 	newLeaseTimeoutString := newLeaseTimeout.Format(time.RFC3339Nano)
 	cond := expression.Name("AssignedTo").Equal(expression.Value(s.machine.ID()))
 	cond = cond.And(
@@ -277,6 +317,10 @@ func (s *BeingStolenShard) Close(checkpoint string, consumerID string) error {
 	return err
 }
 
+func (s *BeingStolenShard) ToString() string {
+	return "BeingStolen"
+}
+
 type ClosedShard struct {
 	machine ShardStateMachine
 }
@@ -299,6 +343,10 @@ func (s *ClosedShard) ClaimShard(_ string) error {
 
 func (s *ClosedShard) Close(_, _ string) error {
 	return errors.New(ErrShardClosed)
+}
+
+func (s *ClosedShard) ToString() string {
+	return "Closed"
 }
 
 /*
@@ -501,7 +549,6 @@ func (shard *shardStatus) Sync(c *DynamoCheckpoint) error {
 	if s, ok := checkpoint["SequenceID"]; ok {
 		sequenceID = *s.S
 	}
-	log.Debugf("Retrieved Shard Iterator %s", sequenceID)
 	shard.Lock()
 	defer shard.Unlock()
 	shard.checkpoint = sequenceID
@@ -529,7 +576,12 @@ func (shard *shardStatus) Sync(c *DynamoCheckpoint) error {
 	if relinquishShard, ok := checkpoint["RelinquishShard"]; ok && relinquishShard.BOOL != nil {
 		shard.relinquishShard = *relinquishShard.BOOL
 	}
-	log.Debugln("Shard updated", *shard)
+
+	if closed, ok := checkpoint["Closed"]; ok && closed.BOOL != nil {
+		shard.closed = *closed.BOOL
+	}
+
+	log.Debugf("Shard updated %+v\n", *shard)
 
 	return nil
 }
