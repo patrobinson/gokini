@@ -152,10 +152,9 @@ func (s *UnallocatedShard) GetLease(consumerID string) error {
 	if s.machine.AssignedTo() == "" {
 		cond = expression.Name("AssignedTo").AttributeNotExists()
 	} else {
+		cond = expression.Name("AssignedTo").Equal(expression.Value(s.machine.AssignedTo()))
 		cond = cond.And(
-			expression.Name("AssignedTo").Equal(expression.Value(s.machine.AssignedTo())),
 			expression.Name("LeaseTimeout").Equal(expression.Value(s.machine.LeaseTimeout().Format(time.RFC3339Nano))),
-			expression.Name("SequenceID").Equal(expression.Value(s.machine.Checkpoint())),
 		)
 	}
 	err = s.machine.TakeLease(s.machine.dc, newLeaseTimeoutString, consumerID, cond)
@@ -218,7 +217,7 @@ func (s *AllocatedShard) RenewLease(consumerID string) error {
 		return errors.New(ErrLeaseNotAcquired)
 	}
 
-	if cr := s.machine.ClaimRequest(); cr != nil || *cr != "" {
+	if cr := s.machine.ClaimRequest(); cr != nil && *cr != "" {
 		return errors.New(ErrLeaseNotAcquired)
 	}
 	newLeaseTimeout := s.machine.Clock.Now().Add(time.Duration(s.machine.dc.LeaseDuration) * time.Millisecond).UTC()
